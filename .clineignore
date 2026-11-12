@@ -1,0 +1,20 @@
+# Cline / AI 助手忽略清单（不影响 Git，也不影响 VS Code 显示）
+# 语法与 .gitignore 一致
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+.vs/
+packages/
+TestResults/
+coverage/
+node_modules/
+*.user
+*.suo
+*.dll
+*.pdb
+*.exe
+*.log
+*.binlog

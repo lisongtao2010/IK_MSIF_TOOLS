@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    ============================================================================
+    AI 调用层（独立类库，与界面层 MSIFAITOOLS 分开编译）
+    ============================================================================
+
+    本工程只放「和 AI 接口打交道」的代码，不引用 WinForms / 不引用界面层的任何东西：
+
+      AiApiOptions.cs            连接配置（环境变量 → ai-settings.json → App.config → 默认值）
+      AiSettingsStore.cs         用户级配置持久化（%APPDATA%\MSIFAITOOLS\ai-settings.json，DPAPI 加密）
+      ChatCompletionClient.cs    OpenAI 兼容 /chat/completions 客户端（HttpClient，失败重试）
+      AiPromptStore.cs           【AI 分析】提示语加载（Prompts\AiPartAnalyzer.Prompt.txt）
+      SpecialProductPromptStore.cs 【CMD 分析】特注品 AI 补足提示语
+      MemberNamePromptStore.cs   【AI 分析】部材名判定提示语
+
+    依赖方向是单向的：MSIFAITOOLS（WinForms）→ MSIFAITOOLS.Ai。
+    本工程不认识 Form / 业务实体 / 数据库，别的宿主（命令行工具、另一个 EXE）也能直接引用。
+
+    ── 为什么用 Link 而不是物理搬文件 ──
+    Source 文件目前还在 ..\MSIFAITOOLS\Services\ 下（本机自动化终端不可用，无法移动文件）。
+    Link 保证「只有一份源码」：文件被本工程编译后，就从 MSIFAITOOLS.csproj 的 Compile
+    列表里移除了（否则同一类型会出现在两个程序集里，报 CS0433）。
+
+    想要物理迁移（文件真的放进本目录）时，在仓库根目录执行：
+
+      Move-Item .\MSIFAITOOLS\MSIFAITOOLS\Services\AiApiOptions.cs               .\MSIFAITOOLS\MSIFAITOOLS.Ai\
+      Move-Item .\MSIFAITOOLS\MSIFAITOOLS\Services\AiSettingsStore.cs            .\MSIFAITOOLS\MSIFAITOOLS.Ai\
+      Move-Item .\MSIFAITOOLS\MSIFAITOOLS\Services\ChatCompletionClient.cs       .\MSIFAITOOLS\MSIFAITOOLS.Ai\
+      Move-Item .\MSIFAITOOLS\MSIFAITOOLS\Services\AiPromptStore.cs              .\MSIFAITOOLS\MSIFAITOOLS.Ai\
+      Move-Item .\MSIFAITOOLS\MSIFAITOOLS\Services\SpecialProductPromptStore.cs  .\MSIFAITOOLS\MSIFAITOOLS.Ai\
+      Move-Item .\MSIFAITOOLS\MSIFAITOOLS\Services\MemberNamePromptStore.cs      .\MSIFAITOOLS\MSIFAITOOLS.Ai\
+
+    然后把下面 Compile / EmbeddedResource 里的 `..\MSIFAITOOLS\Services\` 前缀删掉即可
+    （WinForms 的 MSIFAITOOLS.csproj 里 Prompts 的 None 复制项也要跟着改成 ..\MSIFAITOOLS.Ai\Prompts\...）。
+
+    ── 命名空间 ──
+    这些类型的 namespace 暂时保持 MSIFAITOOLS.Services（见各源文件）。主程序里有几十个文件在
+    这个命名空间下直接使用它们、没有 using，改名会一次性波及所有调用点；等处在本机能编译验证
+    的环境时再统一改成 MSIFAITOOLS.Ai 更稳妥。
+  -->
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{7F3B9C41-2D8E-4A6B-9C15-8E0D4B6A1F72}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>MSIFAITOOLS.Ai</RootNamespace>
+    <AssemblyName>MSIFAITOOLS.Ai</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <!-- 纯托管代码：AnyCPU 即可，被 x64 的 MSIFAITOOLS.exe 引用时会以 x64 加载 -->
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- System.Configuration: ConfigurationManager（App.config 里的 AiApiKey 等）
+         System.Net.Http:       ChatCompletionClient
+         System.Security:       ProtectedData（DPAPI 加密 ai-settings.json 里的密钥）
+         System.Web.Extensions: JavaScriptSerializer（不额外引 NuGet） -->
+    <Reference Include="System" />
+    <Reference Include="System.Configuration" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\MSIFAITOOLS\Services\AiApiOptions.cs" Link="AiApiOptions.cs" />
+    <Compile Include="..\MSIFAITOOLS\Services\AiSettingsStore.cs" Link="AiSettingsStore.cs" />
+    <Compile Include="..\MSIFAITOOLS\Services\ChatCompletionClient.cs" Link="ChatCompletionClient.cs" />
+    <Compile Include="..\MSIFAITOOLS\Services\AiPromptStore.cs" Link="AiPromptStore.cs" />
+    <Compile Include="..\MSIFAITOOLS\Services\SpecialProductPromptStore.cs" Link="SpecialProductPromptStore.cs" />
+    <Compile Include="..\MSIFAITOOLS\Services\MemberNamePromptStore.cs" Link="MemberNamePromptStore.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      提示语文件：既作为内嵌资源编译进 MSIFAITOOLS.Ai.dll（兜底用），
+      又由界面层复制到输出目录的 Prompts\ 下（运行时可改，无需重新编译）。
+      LogicalName 必须保持 MSIFAITOOLS.Prompts.*：各 Store 用常量按这个名字找资源，
+      而资源现在所在的程序集变成了 MSIFAITOOLS.Ai（Store 用 typeof(...).Assembly 定位，
+      跟着一起搬，所以不需要改代码）。
+    -->
+    <EmbeddedResource Include="..\MSIFAITOOLS\Prompts\AiPartAnalyzer.Prompt.txt">
+      <LogicalName>MSIFAITOOLS.Prompts.AiPartAnalyzer.Prompt.txt</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\MSIFAITOOLS\Prompts\MemberNameAdvisor.Prompt.txt">
+      <LogicalName>MSIFAITOOLS.Prompts.MemberNameAdvisor.Prompt.txt</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\MSIFAITOOLS\Prompts\SpecialProductAdvisor.Prompt.txt">
+      <LogicalName>MSIFAITOOLS.Prompts.SpecialProductAdvisor.Prompt.txt</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

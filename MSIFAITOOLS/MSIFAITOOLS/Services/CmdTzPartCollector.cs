@@ -1,0 +1,1521 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Web.Script.Serialization;
+
+namespace MSIFAITOOLS.Services
+{
+    /// <summary>
+    /// <c>classify\tz.json</c> 里的一条明细 = Excel 部品表（「カメラ」表）的一行：
+    /// 品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法，另带来源（file / sheet / row）。
+    /// 结构与 <c>CadPartSplitter</c> 的 <c>TzJsonBuilder</c> 写出的一致（见 docs\分割原理.md 3.15）。
+    /// </summary>
+    internal sealed class CmdTzEntry
+    {
+        /// <summary>品種（分类依据里要比对的词）。</summary>
+        public string Variety { get; set; }
+
+        /// <summary>部品名。</summary>
+        public string PartName { get; set; }
+
+        /// <summary>枠区分。</summary>
+        public string FrameKind { get; set; }
+
+        /// <summary>部品コード。</summary>
+        public string PartCode { get; set; }
+
+        /// <summary>追加対応特注寸法。</summary>
+        public string SpecialSize { get; set; }
+
+        /// <summary>来源 Excel 文件名。</summary>
+        public string FileName { get; set; }
+
+        /// <summary>来源表名（正常是 カメラ）。</summary>
+        public string Sheet { get; set; }
+
+        /// <summary>来源 Excel 的行号（1 起，回溯用）。</summary>
+        public int Row { get; set; }
+
+        /// <summary>
+        /// 来源文件：读 <c>classify\tz.json</c> 时为空（调用方另给路径），
+        /// 读 <c>特注品.csv</c> 时是该 CSV 的完整路径（写进「来源表格文件」）。
+        /// </summary>
+        public string SourcePath { get; set; }
+    }
+
+    /// <summary>
+    /// 一次「tz.json 部品追加」的结果：命中的部品明细 + 统计 + 提示。
+    /// 由 <see cref="CmdTzPartCollector.Collect"/> 生成，供【CMD 分析】写库。
+    /// </summary>
+    internal sealed class CmdTzPartResult
+    {
+        public CmdTzPartResult(string drawingNo)
+        {
+            DrawingNo = drawingNo ?? string.Empty;
+            Parts = new List<PartBasicInfo>();
+            Notes = new List<string>();
+            MatchedKindTexts = new List<string>();
+        }
+
+        /// <summary>アッセンブリ図 の 図番（= 这些部品挂到的図番）。</summary>
+        public string DrawingNo { get; private set; }
+
+        /// <summary>命中品種的部品明细（尚未入库）。</summary>
+        public List<PartBasicInfo> Parts { get; private set; }
+
+        /// <summary>处理过程中的提示（由调用方写进日志）。</summary>
+        public List<string> Notes { get; private set; }
+
+        /// <summary>命中的品種原文（去重，日志用）。</summary>
+        public List<string> MatchedKindTexts { get; private set; }
+
+        /// <summary>明细条数（<c>特注品.csv</c> / <c>tz.json</c> 读到的行数）。</summary>
+        public int EntryCount { get; set; }
+
+        /// <summary>品種命中分类依据的明细条数。</summary>
+        public int MatchedEntryCount { get; set; }
+
+        /// <summary>品種为空（不知道属于哪个品種）而跳过的条数。</summary>
+        public int BlankKindCount { get; set; }
+
+        /// <summary>部品コード 无效（空 / 占位符 / 不含英文字母）而跳过的条数。</summary>
+        public int InvalidCodeRowCount { get; set; }
+
+        /// <summary>明细里带「追加不要」这类字样（Excel 明说不要追加）而跳过的条数。</summary>
+        public int NoNeedRowCount { get; set; }
+
+        /// <summary>同一品種 + 部品名 + 部品コード 重复而跳过的条数。</summary>
+        public int SkippedRowCount { get; set; }
+    }
+
+    /// <summary>
+    /// 【CMD 分析】第 4 步的追加逻辑（步骤名仍叫「tz.json 部品追加」）：明细里「品種」出现在
+    /// アッセンブリ図 的<b>分类依据</b>中的，登记到部品基本信息表（<b>不调用 AI</b>、不写任何文件）。
+    /// <para>
+    /// <b>明细从哪来</b>：优先读最前面那步生成的 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>
+    /// （<see cref="LoadCsvEntries"/>，<b>不再解析 Excel</b>）；一个 CSV 都没有时才退回读旧的
+    /// <c>classify\tz.json</c>（<see cref="LoadEntries"/>）。
+    /// </para>
+    ///
+    /// 流程：
+    /// <list type="number">
+    ///   <item>读 <c>&lt;输出根目录&gt;\classify\PdfInfoList.txt</c>（図番号 / 文件名 / 图面分类 / 分类依据），
+    ///         取出「图面分类 = アッセンブリ図」的记录的<b>分类依据</b>（形如
+    ///         <c>table_05.csv：H310 １７ラシッサ 片引戸 枠 アッセンブリ図</c>）；</item>
+    ///   <item>读明细：<c>&lt;输出根目录&gt;\&lt;文件名&gt;\特注品.csv</c>（表头 品種 / 部品名 / 枠区分 /
+    ///         部品コード / 員数 / 追加対応特注寸法）；一个 CSV 都没有时退回 <c>classify\tz.json</c>
+    ///         （顶层 <c>items</c> 数组，字段相同）；</item>
+    ///   <item>把分类依据按空白 / 标点切成单词，与 <c>品種</c> 做<b>完全一致</b>比较
+    ///         （全角转半角、去空白、忽略大小写）；一个都没命中时再退回<b>包含</b>比较
+    ///         —— 与第 3 步「要領図部品追加」的判定完全一致；</item>
+    ///   <item>命中的条目转成 <see cref="PartBasicInfo"/>：図番 = アッセンブリ図 の図番、页码 = 1，
+    ///         部品名 / 枠区分 / 部品コード 取 tz.json 的同名列，追加対応特注寸法进备注
+    ///         （<c>品種：片引戸；特注寸法：2199 ≦Ｗ</c>）、<b>特注 = <see cref="SpecialNoteMark"/></b>（<c>1</c>），
+    ///         校验状态 = 未校验；</item>
+    ///   <item>追加対応特注寸法由 <see cref="ApplySpecialSize"/> 解析成 H / W 范围：
+    ///         <c>2199 ≦Ｗ</c> → W下限 = 2199、W上限 = 9999（只写一边时另一边固定 9999 / 0）；</item>
+    ///   <item>明细里带「追加不要」这类字样（品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法 任一处，
+    ///         见 <see cref="NoNeedMarks"/>）→ <b>整条不追加</b>；</item>
+    ///   <item>部品コード 必须是含英文字母的编码（空 / 占位符 / 纯数字一律丢弃），
+    ///         同一「品種 + 部品名 + 部品コード」只登录一条；</item>
+    ///   <item>番号由调用方给起始值后连续编号（唯一索引是 図番 + 页码 + 番号 + 部品コード）。</item>
+    /// </list>
+    /// </summary>
+    internal sealed class CmdTzPartCollector
+    {
+        /// <summary>Excel 部品表文件名（放在 <c>classify</c> 目录下，与 <c>PdfInfoList.txt</c> 同级）。</summary>
+        public const string FileName = "tz.json";
+
+        /// <summary>分类清单目录名。</summary>
+        public const string ClassifyFolderName = "classify";
+
+        /// <summary>分类清单文件名。</summary>
+        public const string PdfInfoListFileName = "PdfInfoList.txt";
+
+        /// <summary>备注里「品種」的前缀（与第 3 步一致）。</summary>
+        public const string RemarkKindPrefix = "品種：";
+
+        /// <summary>备注里「特注寸法」的前缀（追加対応特注寸法）。</summary>
+        public const string RemarkSpecialSizePrefix = "特注寸法：";
+
+        /// <summary>
+        /// 「特注」列的值：tz.json 的明细都是「追加対応」部品，一律标 <c>1</c>
+        /// （特注寸法原文留在备注里对照，见 <see cref="RemarkSpecialSizePrefix"/>）。
+        /// 与 <see cref="PartBasicInfo.SpecialNoteMark"/> 同值（写库前按它决定是否清空数量 / 切断寸法）。
+        /// </summary>
+        public const string SpecialNoteMark = PartBasicInfo.SpecialNoteMark;
+
+        /// <summary>
+        /// 明细里出现这些字样（写在 品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法 任一处）
+        /// 就表示这张 Excel 明确说不要追加，整条跳过（判定忽略全角 / 空白 / 大小写）。
+        /// </summary>
+        private static readonly string[] NoNeedMarks = new string[]
+        {
+            "追加不要", "追加しない", "追加なし", "追加無し"
+        };
+
+        /// <summary>
+        /// 特注寸法只写下限时的上限固定值（<c>2199 ≦Ｗ</c> → W下限 2199、W上限 9999）。
+        /// </summary>
+        public const int SpecialSizeOpenUpper = 9999;
+
+        /// <summary>
+        /// 特注寸法只写上限时的下限固定值（<c>Ｗ ≦ 2199</c> → W下限 0、W上限 2199）。
+        /// </summary>
+        public const int SpecialSizeOpenLower = 0;
+
+        /// <summary>tz.json 顶层存放明细的键。</summary>
+        private const string ItemKey = "items";
+
+        private const string VarietyKey = "品種";
+        private const string PartNameKey = "部品名";
+        private const string FrameKindKey = "枠区分";
+        private const string PartCodeKey = "部品コード";
+        private const string SpecialSizeKey = "追加対応特注寸法";
+        private const string FileKey = "file";
+        private const string SheetKey = "sheet";
+        private const string RowKey = "row";
+
+        /// <summary>PdfInfoList.txt 的列名。</summary>
+        private const string HeaderDrawingNo = "図番号";
+
+        private const string HeaderCategory = "图面分类";
+        private const string HeaderEvidence = "分类依据";
+
+        /// <summary>分词用的分隔符（与第 3 步 <c>CmdInstructionPartCollector</c> 完全一致）。</summary>
+        private static readonly char[] WordSeparators = new char[]
+        {
+            ' ', '\u3000', '\t', '\r', '\n', ',', '、', '，', '/', '／', '・', '|', '｜',
+            ':', '：', ';', '；', '(', ')', '（', '）', '「', '」', '【', '】', '［', '］'
+        };
+
+        /// <summary><c>&lt;输出根目录&gt;\classify</c>。</summary>
+        public static string GetClassifyDirectory(string outputDirectory)
+        {
+            return Path.Combine(outputDirectory ?? string.Empty, ClassifyFolderName);
+        }
+
+        /// <summary><c>&lt;输出根目录&gt;\classify\tz.json</c>。</summary>
+        public static string GetFilePath(string outputDirectory)
+        {
+            return Path.Combine(GetClassifyDirectory(outputDirectory), FileName);
+        }
+
+        /// <summary><c>&lt;输出根目录&gt;\classify\PdfInfoList.txt</c>。</summary>
+        public static string GetPdfInfoListPath(string outputDirectory)
+        {
+            return Path.Combine(GetClassifyDirectory(outputDirectory), PdfInfoListFileName);
+        }
+
+        /// <summary>
+        /// 读 <c>classify\PdfInfoList.txt</c>，返回「图面分类 = アッセンブリ図」的
+        /// 図番 → 分类依据（原文）。读不到文件 / 表头不对时记一条 <paramref name="notes"/> 并返回空表
+        /// （调用方随后退回用一览里的分类依据）。
+        /// </summary>
+        public static Dictionary<string, string> ReadAssemblyEvidence(string outputDirectory,
+            IList<string> notes)
+        {
+            Dictionary<string, string> evidence =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            string path = GetPdfInfoListPath(outputDirectory);
+
+            if (!File.Exists(path))
+            {
+                AddNote(notes, string.Format("找不到 {0}（{1}）：改用一览里的分类依据",
+                    PdfInfoListFileName, GetClassifyDirectory(outputDirectory)));
+
+                return evidence;
+            }
+
+            List<string[]> rows;
+
+            try
+            {
+                rows = ReadCsv(path);
+            }
+            catch (Exception ex)
+            {
+                AddNote(notes, string.Format("{0}：读取失败（{1}：{2}）", PdfInfoListFileName,
+                    ex.GetType().Name, ex.Message));
+
+                return evidence;
+            }
+
+            if (rows.Count == 0)
+            {
+                AddNote(notes, PdfInfoListFileName + "：文件为空");
+                return evidence;
+            }
+
+            string[] header = rows[0];
+            int drawingNoCol = IndexOfHeader(header, HeaderDrawingNo);
+            int categoryCol = IndexOfHeader(header, HeaderCategory);
+            int evidenceCol = IndexOfHeader(header, HeaderEvidence);
+
+            if (drawingNoCol < 0 || categoryCol < 0)
+            {
+                AddNote(notes, string.Format("{0}：表头没有「{1} / {2}」列（表头：{3}）",
+                    PdfInfoListFileName, HeaderDrawingNo, HeaderCategory, JoinHeader(header)));
+
+                return evidence;
+            }
+
+            for (int rowIndex = 1; rowIndex < rows.Count; rowIndex++)
+            {
+                string[] row = rows[rowIndex];
+
+                if (IsEmptyRow(row))
+                {
+                    continue;
+                }
+
+                if (PdfCategoryNames.Parse(Cell(row, categoryCol)) != PdfCategory.Assembly)
+                {
+                    continue;
+                }
+
+                string drawingNo = CleanDrawingNo(Cell(row, drawingNoCol));
+
+                if (drawingNo.Length == 0 || evidence.ContainsKey(drawingNo))
+                {
+                    continue;
+                }
+
+                evidence.Add(drawingNo, evidenceCol < 0 ? string.Empty : Cell(row, evidenceCol).Trim());
+            }
+
+            return evidence;
+        }
+
+        /// <summary>
+        /// 读 <c>classify\tz.json</c>，返回全部明细（顺序与文件一致）。
+        /// 文件缺失 / 解析失败时记一条 <paramref name="notes"/> 并返回空表。
+        /// 顶层结构：<c>{ "item_count": N, "items": [ { "品種": …, "部品名": … }, … ] }</c>。
+        /// </summary>
+        public static List<CmdTzEntry> LoadEntries(string outputDirectory, IList<string> notes)
+        {
+            List<CmdTzEntry> entries = new List<CmdTzEntry>();
+            string path = GetFilePath(outputDirectory);
+
+            if (!File.Exists(path))
+            {
+                AddNote(notes, string.Format("找不到 {0}（先跑【开始分解】生成 Excel 部品表）：跳过 tz.json 部品",
+                    Path.Combine(ClassifyFolderName, FileName)));
+
+                return entries;
+            }
+
+            string text;
+
+            try
+            {
+                text = File.ReadAllText(path, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                AddNote(notes, string.Format("{0}：读取失败（{1}：{2}）", FileName,
+                    ex.GetType().Name, ex.Message));
+
+                return entries;
+            }
+
+            if (text.Trim().Length == 0)
+            {
+                AddNote(notes, FileName + "：文件为空");
+
+                return entries;
+            }
+
+            object root;
+
+            try
+            {
+                JavaScriptSerializer serializer = new JavaScriptSerializer();
+                serializer.MaxJsonLength = int.MaxValue;
+                root = serializer.DeserializeObject(text);
+            }
+            catch (Exception ex)
+            {
+                AddNote(notes, string.Format("{0}：解析失败（{1}：{2}）", FileName,
+                    ex.GetType().Name, ex.Message));
+
+                return entries;
+            }
+
+            Dictionary<string, object> map = root as Dictionary<string, object>;
+            object itemsValue = null;
+
+            if (map == null || !map.TryGetValue(ItemKey, out itemsValue))
+            {
+                AddNote(notes, string.Format("{0}：没有「{1}」数组", FileName, ItemKey));
+
+                return entries;
+            }
+
+            object[] items = itemsValue as object[];
+
+            if (items == null)
+            {
+                AddNote(notes, string.Format("{0}：「{1}」不是数组", FileName, ItemKey));
+
+                return entries;
+            }
+
+            foreach (object item in items)
+            {
+                Dictionary<string, object> row = item as Dictionary<string, object>;
+
+                if (row == null)
+                {
+                    continue;
+                }
+
+                CmdTzEntry entry = new CmdTzEntry();
+                entry.Variety = GetText(row, VarietyKey);
+                entry.PartName = GetText(row, PartNameKey);
+                entry.FrameKind = GetText(row, FrameKindKey);
+                entry.PartCode = GetText(row, PartCodeKey);
+                entry.SpecialSize = GetText(row, SpecialSizeKey);
+                entry.FileName = GetText(row, FileKey);
+                entry.Sheet = GetText(row, SheetKey);
+                entry.Row = GetInt(row, RowKey);
+                entries.Add(entry);
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// 读【CMD 分析】最前面那一步（<see cref="CmdSpecialProductCsvExporter"/>）写出的所有
+        /// <c>特注品.csv</c>（<c>&lt;outputDirectory&gt;\&lt;文件名&gt;\特注品.csv</c>），
+        /// 转成与 <c>tz.json</c> 相同的明细列表 —— 第 4 步<b>直接用它，不再解析 Excel</b>。
+        /// <para>
+        /// 列按表头名找：品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法
+        /// （表头里没有的列按空处理；「員数」第 4 步不用）。
+        /// 一个 CSV 都没有时记一条 <paramref name="notes"/>，调用方可以退回读 <c>tz.json</c>。
+        /// </para>
+        /// </summary>
+        /// <param name="outputDirectory"><c>&lt;PDF 文件夹&gt;\AiAppData</c>（CSV 就写在各子文件夹里）。</param>
+        /// <param name="notes">提示（由调用方写进日志）。</param>
+        /// <param name="fileCount">读到明细的 CSV 个数。</param>
+        public static List<CmdTzEntry> LoadCsvEntries(string outputDirectory, IList<string> notes,
+            out int fileCount)
+        {
+            fileCount = 0;
+
+            List<CmdTzEntry> entries = new List<CmdTzEntry>();
+            List<string> paths = FindSpecialProductCsvFiles(outputDirectory);
+
+            if (paths.Count == 0)
+            {
+                AddNote(notes, string.Format("找不到 {0}（先跑最前面的「{1}」）：跳过 {2} 部品",
+                    CmdSpecialProductCsvExporter.CsvFileName, CmdAnalysisSteps.SpecialProductCsvName,
+                    FileName));
+
+                return entries;
+            }
+
+            foreach (string path in paths)
+            {
+                List<string[]> rows;
+
+                try
+                {
+                    rows = ReadCsv(path);
+                }
+                catch (Exception ex)
+                {
+                    AddNote(notes, string.Format("{0}：读取失败（{1}：{2}）", Path.GetFileName(path),
+                        ex.GetType().Name, ex.Message));
+
+                    continue;
+                }
+
+                if (rows.Count == 0)
+                {
+                    continue;
+                }
+
+                string[] header = rows[0];
+                int kindCol = IndexOfHeader(header, VarietyKey);
+                int nameCol = IndexOfHeader(header, PartNameKey);
+                int frameCol = IndexOfHeader(header, FrameKindKey);
+                int codeCol = IndexOfHeader(header, PartCodeKey);
+                int sizeCol = IndexOfHeader(header, SpecialSizeKey);
+
+                if (kindCol < 0)
+                {
+                    AddNote(notes, string.Format("{0}：表头没有「{1}」列（表头：{2}），跳过",
+                        Path.GetFileName(path), VarietyKey, JoinHeader(header)));
+
+                    continue;
+                }
+
+                // 「文件名」= 该 CSV 所在的文件夹名（= 特注品 xlsx / 図番，例 H310Z10004）
+                string fileName = Path.GetFileName(Path.GetDirectoryName(path));
+
+                for (int rowIndex = 1; rowIndex < rows.Count; rowIndex++)
+                {
+                    string[] row = rows[rowIndex];
+
+                    if (IsEmptyRow(row))
+                    {
+                        continue;
+                    }
+
+                    CmdTzEntry entry = new CmdTzEntry();
+                    entry.Variety = Cell(row, kindCol);
+                    entry.PartName = nameCol < 0 ? string.Empty : Cell(row, nameCol);
+                    entry.FrameKind = frameCol < 0 ? string.Empty : Cell(row, frameCol);
+                    entry.PartCode = codeCol < 0 ? string.Empty : Cell(row, codeCol);
+                    entry.SpecialSize = sizeCol < 0 ? string.Empty : Cell(row, sizeCol);
+                    entry.FileName = fileName;
+                    entry.Sheet = CmdSpecialProductCsvExporter.PartSheetName;
+                    entry.Row = rowIndex + 1;
+                    entry.SourcePath = path;
+                    entries.Add(entry);
+                }
+
+                fileCount++;
+            }
+
+            return entries;
+        }
+
+        /// <summary>
+        /// 递归找 <c>&lt;outputDirectory&gt;</c> 下的所有 <c>特注品.csv</c>（按路径排序，结果稳定）。
+        /// 目录不存在 / 读不了时返回空表（调用方会记一条「找不到 特注品.csv」）。
+        /// </summary>
+        private static List<string> FindSpecialProductCsvFiles(string outputDirectory)
+        {
+            List<string> paths = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(outputDirectory) || !Directory.Exists(outputDirectory))
+            {
+                return paths;
+            }
+
+            try
+            {
+                string[] files = Directory.GetFiles(outputDirectory,
+                    CmdSpecialProductCsvExporter.CsvFileName, SearchOption.AllDirectories);
+
+                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+                paths.AddRange(files);
+            }
+            catch (Exception)
+            {
+                // 目录读不了当作没有
+            }
+
+            return paths;
+        }
+
+        /// <summary>
+        /// 把明细（<c>tz.json</c> 或 <c>特注品.csv</c>）里「品種 ∈ 分类依据」的转成部品基本信息（不写库）。
+        /// </summary>
+        /// <param name="drawingNo">アッセンブリ図 の図番（这些部品挂到它名下）。</param>
+        /// <param name="evidence">该図番的「分类依据」原文（来自 PdfInfoList.txt）。</param>
+        /// <param name="sourcePath">
+        /// 兜底用的「来源表格文件」路径：明细自带 <see cref="CmdTzEntry.SourcePath"/>（= 读的是
+        /// <c>特注品.csv</c>）时以明细为准，只有读 <c>tz.json</c> 时才用它。
+        /// </param>
+        /// <param name="pdfFile">该アッセンブリ図 的 PDF 路径（写进「来源PDF」，可为空）。</param>
+        /// <param name="entries">已经读好的明细（<c>特注品.csv</c> 或 <c>tz.json</c>）。</param>
+        /// <param name="startNumber">本次追加行的起始「番号」（接在已有行之后）。</param>
+        public CmdTzPartResult Collect(string drawingNo, string evidence, string sourcePath, string pdfFile,
+            IList<CmdTzEntry> entries, int startNumber)
+        {
+            CmdTzPartResult result = new CmdTzPartResult(drawingNo);
+
+            if (entries == null || entries.Count == 0)
+            {
+                return result;
+            }
+
+            result.EntryCount = entries.Count;
+
+            // 提示里的来源名：读 特注品.csv 时写 CSV，读 tz.json 时写 tz.json
+            string sourceName = GetEntrySourceName(entries);
+
+            string evidenceText = evidence ?? string.Empty;
+            Dictionary<string, bool> tokens = BuildTokenSet(evidenceText);
+            string flatEvidence = NormalizeKey(evidenceText);
+
+            // 先看这次明细里有哪些品種（非空），再一次性决定「完全一致」还是退回「包含」
+            List<string> kindTexts = new List<string>();
+            HashSet<string> kindKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool anyTokenHit = false;
+
+            foreach (CmdTzEntry entry in entries)
+            {
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                string key = NormalizeKey(entry.Variety);
+
+                if (IsBlankKind(key) || kindKeys.Contains(key))
+                {
+                    continue;
+                }
+
+                kindKeys.Add(key);
+                kindTexts.Add(entry.Variety.Trim());
+
+                if (tokens.ContainsKey(key))
+                {
+                    anyTokenHit = true;
+                }
+            }
+
+            bool useContains = !anyTokenHit && flatEvidence.Length > 0;
+            HashSet<string> addedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (CmdTzEntry entry in entries)
+            {
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                string kindKey = NormalizeKey(entry.Variety);
+
+                if (IsBlankKind(kindKey))
+                {
+                    result.BlankKindCount++;
+
+                    continue;
+                }
+
+                bool matched = useContains
+                    ? flatEvidence.IndexOf(kindKey, StringComparison.OrdinalIgnoreCase) >= 0
+                    : tokens.ContainsKey(kindKey);
+
+                if (!matched)
+                {
+                    continue;
+                }
+
+                result.MatchedEntryCount++;
+                AddKindText(result.MatchedKindTexts, entry.Variety);
+
+                // Excel 上明写「追加不要」这类字样：不追加到部品基本信息
+                if (IsNoNeedEntry(entry))
+                {
+                    result.NoNeedRowCount++;
+
+                    continue;
+                }
+
+                if (!IsValidPartCode(entry.PartCode))
+                {
+                    result.InvalidCodeRowCount++;
+
+                    continue;
+                }
+
+                string dedupeKey = kindKey + "#" + NormalizeKey(entry.PartName) + "#" +
+                    NormalizeKey(entry.PartCode);
+
+                if (!addedKeys.Add(dedupeKey))
+                {
+                    result.SkippedRowCount++;
+
+                    continue;
+                }
+
+                PartBasicInfo part = new PartBasicInfo(drawingNo, 1, startNumber + result.Parts.Count,
+                    entry.PartName, string.Empty, entry.FrameKind, string.Empty, string.Empty,
+                    string.Empty, entry.PartCode);
+
+                part.Remark = BuildRemark(entry.Variety, entry.SpecialSize);
+                // 特注列 = 1（tz.json 的明细都是「追加対応」部品，统一标 1；特注寸法原文留在备注里对照）
+                part.SpecialNote = SpecialNoteMark;
+                // 按特注寸法写 H / W 范围（2199 ≦Ｗ → W下限 2199 / W上限 9999）
+                ApplySpecialSize(part, entry.SpecialSize);
+                part.SourceKind = PartSourceKind.CmdTz;
+                part.SourceTag = PartSourceTag.CmdTz;
+                // 来源表格文件：读 CSV 时写具体那个 特注品.csv 的完整路径，读 tz.json 时写 tz.json
+                part.SourceFile = string.IsNullOrEmpty(entry.SourcePath)
+                    ? (sourcePath ?? string.Empty)
+                    : entry.SourcePath;
+                part.PdfFile = pdfFile ?? string.Empty;
+                part.VerifyStatus = PartVerifyStatus.NotChecked;
+
+                result.Parts.Add(part);
+            }
+
+            AddCollectNotes(result, kindTexts, kindKeys.Count, useContains, sourceName);
+
+            return result;
+        }
+
+        /// <summary>
+        /// 提示里用的来源名：明细带 <see cref="CmdTzEntry.SourcePath"/>（= 读的是 <c>特注品.csv</c>）
+        /// 时返回「特注品.csv」，否则返回「tz.json」。
+        /// </summary>
+        private static string GetEntrySourceName(IList<CmdTzEntry> entries)
+        {
+            if (entries != null)
+            {
+                foreach (CmdTzEntry entry in entries)
+                {
+                    if (entry != null && !string.IsNullOrEmpty(entry.SourcePath))
+                    {
+                        return CmdSpecialProductCsvExporter.CsvFileName;
+                    }
+                }
+            }
+
+            return FileName;
+        }
+
+        // ── 日志说明 ─────────────────────────────────────────────────────────
+
+        /// <summary>把「命中 / 未命中 / 丢弃」的统计写成提示行（由调用方写进日志）。</summary>
+        private static void AddCollectNotes(CmdTzPartResult result, IList<string> kindTexts, int kindCount,
+            bool useContains, string sourceName)
+        {
+            string label = string.IsNullOrEmpty(sourceName) ? FileName : sourceName;
+
+            if (result.MatchedEntryCount == 0)
+            {
+                if (kindCount == 0)
+                {
+                    AddNote(result.Notes, label + "：没有带品種的明细");
+                }
+                else
+                {
+                    AddNote(result.Notes, string.Format("{0}：品種（{1}）都不在分类依据里，跳过",
+                        label, JoinLimited(kindTexts, 4)));
+                }
+            }
+            else
+            {
+                AddNote(result.Notes, string.Format("{0}：品種命中 {1} 条（命中品種 {2}{3}）", label,
+                    result.MatchedEntryCount, JoinLimited(result.MatchedKindTexts, 4),
+                    useContains ? "，按包含比较命中" : string.Empty));
+            }
+
+            if (result.InvalidCodeRowCount > 0)
+            {
+                AddNote(result.Notes, string.Format("{0}：部品コード 为空 / 无效（不含英文字母）{1} 条，已跳过",
+                    label, result.InvalidCodeRowCount));
+            }
+
+            if (result.NoNeedRowCount > 0)
+            {
+                AddNote(result.Notes, string.Format("{0}：明细写着「追加不要」{1} 条，没有追加到部品基本信息",
+                    label, result.NoNeedRowCount));
+            }
+
+            if (result.SkippedRowCount > 0)
+            {
+                AddNote(result.Notes, string.Format("{0}：品種 + 部品名 + 部品コード 重复 {1} 条，已去重",
+                    label, result.SkippedRowCount));
+            }
+
+            if (result.BlankKindCount > 0)
+            {
+                AddNote(result.Notes, string.Format("{0}：没有品種的明细 {1} 条（无法比对分类依据），已跳过",
+                    label, result.BlankKindCount));
+            }
+        }
+
+        /// <summary>备注文字：<c>品種：片引戸；特注寸法：2199 ≦Ｗ</c>（没有特注寸法时只写品種）。</summary>
+        private static string BuildRemark(string kindText, string specialSize)
+        {
+            string remark = RemarkKindPrefix + (kindText ?? string.Empty).Trim();
+            string size = (specialSize ?? string.Empty).Trim();
+
+            if (size.Length > 0)
+            {
+                remark += "；" + RemarkSpecialSizePrefix + size;
+            }
+
+            return remark;
+        }
+
+        // ── 特注寸法 → H / W 范围 ────────────────────────────────────────────
+
+        /// <summary>
+        /// 把「追加対応特注寸法」（Excel 部品表原文，例如 <c>2199 ≦Ｗ</c>）解析成 H / W 的上下限
+        /// 写进 <paramref name="part"/>：
+        /// <list type="bullet">
+        ///   <item><c>2199 ≦Ｗ</c>（只写下限）→ W下限 = 2199、W上限 = <see cref="SpecialSizeOpenUpper"/>（9999 固定）；</item>
+        ///   <item><c>Ｗ ≦ 2199</c>（只写上限）→ W下限 = <see cref="SpecialSizeOpenLower"/>（0 固定）、W上限 = 2199；</item>
+        ///   <item><c>1800 ≦Ｗ ≦ 2000</c> → 两端都按写的不等号取；<c>＜</c>（开区间）各让 1
+        ///         （<c>1299 ≦Ｗ ＜ 1749</c> → 1299 ~ 1748）；</item>
+        ///   <item><c>Ｈ</c> 同理（写进 H下限 / H上限）；一行里 H 与 W 同时写也能分开取。</item>
+        /// </list>
+        /// 认不出的写法（没有数字、没有 Ｈ / Ｗ）一律留空，不猜。
+        /// </summary>
+        public static void ApplySpecialSize(PartBasicInfo part, string specialSize)
+        {
+            if (part == null)
+            {
+                return;
+            }
+
+            List<SpecialSizeToken> tokens = TokenizeSpecialSize(specialSize);
+            double? heightMin = null;
+            double? heightMax = null;
+            double? widthMin = null;
+            double? widthMax = null;
+
+            for (int index = 0; index < tokens.Count; index++)
+            {
+                SpecialSizeToken token = tokens[index];
+
+                if (token.Kind != SpecialSizeTokenKind.Axis)
+                {
+                    continue;
+                }
+
+                bool isHeight = string.Equals(token.Text, "H", StringComparison.Ordinal);
+                double? min = isHeight ? heightMin : widthMin;
+                double? max = isHeight ? heightMax : widthMax;
+
+                // 左：「数字 不等号 変数」（2199 ≦Ｗ）→ 下限
+                if (index >= 2 && tokens[index - 1].Kind == SpecialSizeTokenKind.Operator &&
+                    tokens[index - 2].Kind == SpecialSizeTokenKind.Number)
+                {
+                    ApplyRelation(tokens[index - 1].Text, true, tokens[index - 2].Text, ref min, ref max);
+                }
+
+                // 右：「変数 不等号 数字」（Ｗ ≦ 2199）→ 上限
+                if (index + 2 < tokens.Count && tokens[index + 1].Kind == SpecialSizeTokenKind.Operator &&
+                    tokens[index + 2].Kind == SpecialSizeTokenKind.Number)
+                {
+                    ApplyRelation(tokens[index + 1].Text, false, tokens[index + 2].Text, ref min, ref max);
+                }
+
+                if (!min.HasValue && !max.HasValue)
+                {
+                    continue;
+                }
+
+                if (isHeight)
+                {
+                    heightMin = min;
+                    heightMax = max;
+                }
+                else
+                {
+                    widthMin = min;
+                    widthMax = max;
+                }
+            }
+
+            // 只写了一边的用固定值补齐：2199 ≦Ｗ → 上限 9999；Ｗ ≦ 2199 → 下限 0
+            FinalizeBound(ref heightMin, ref heightMax);
+            FinalizeBound(ref widthMin, ref widthMax);
+
+            part.HeightMin = FormatBound(heightMin);
+            part.HeightMax = FormatBound(heightMax);
+            part.WidthMin = FormatBound(widthMin);
+            part.WidthMax = FormatBound(widthMax);
+        }
+
+        /// <summary>
+        /// 只写了一边时补齐另一边（有下限没上限 → 上限 <see cref="SpecialSizeOpenUpper"/>；
+        /// 有上限没下限 → 下限 <see cref="SpecialSizeOpenLower"/>），两边矛盾时交换；
+        /// 两边都没有就都留空（认不出的写法不猜）。
+        /// </summary>
+        private static void FinalizeBound(ref double? min, ref double? max)
+        {
+            if (min.HasValue && !max.HasValue)
+            {
+                max = SpecialSizeOpenUpper;
+            }
+            else if (!min.HasValue && max.HasValue)
+            {
+                min = SpecialSizeOpenLower;
+            }
+            else if (min.HasValue && max.HasValue && min.Value > max.Value)
+            {
+                double swap = min.Value;
+                min = max.Value;
+                max = swap;
+            }
+        }
+
+        /// <summary>
+        /// 把一个「数字 不等号 変数」/「変数 不等号 数字」的条件并进 <paramref name="min"/> /
+        /// <paramref name="max"/>。<paramref name="axisOnRight"/> = true 表示数字在左边（<c>2199 ≦Ｗ</c>）。
+        /// <c>＜</c>（开区间）按下限 +1 / 上限 -1 处理；同一方向出现多次时取更严的那个。
+        /// </summary>
+        private static void ApplyRelation(string op, bool axisOnRight, string numberText,
+            ref double? min, ref double? max)
+        {
+            double value;
+
+            if (!double.TryParse(numberText, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            {
+                return;
+            }
+
+            string relation = op ?? string.Empty;
+
+            if (axisOnRight)
+            {
+                // 「数字 不等号 変数」：数字 ≦ 変数 = 下限
+                if (relation == "<=")
+                {
+                    SetLower(ref min, value);
+                }
+                else if (relation == "<")
+                {
+                    SetLower(ref min, value + 1);
+                }
+                else if (relation == ">=")
+                {
+                    SetUpper(ref max, value);
+                }
+                else if (relation == ">")
+                {
+                    SetUpper(ref max, value - 1);
+                }
+                else if (relation == "=")
+                {
+                    SetLower(ref min, value);
+                    SetUpper(ref max, value);
+                }
+            }
+            else
+            {
+                // 「変数 不等号 数字」：変数 ≦ 数字 = 上限
+                if (relation == "<=")
+                {
+                    SetUpper(ref max, value);
+                }
+                else if (relation == "<")
+                {
+                    SetUpper(ref max, value - 1);
+                }
+                else if (relation == ">=")
+                {
+                    SetLower(ref min, value);
+                }
+                else if (relation == ">")
+                {
+                    SetLower(ref min, value + 1);
+                }
+                else if (relation == "=")
+                {
+                    SetLower(ref min, value);
+                    SetUpper(ref max, value);
+                }
+            }
+        }
+
+        /// <summary>记下限（同一方向出现多次时取更严的 = 更大的）。</summary>
+        private static void SetLower(ref double? min, double value)
+        {
+            min = !min.HasValue || value > min.Value ? value : min.Value;
+        }
+
+        /// <summary>记上限（同一方向出现多次时取更严的 = 更小的）。</summary>
+        private static void SetUpper(ref double? max, double value)
+        {
+            max = !max.HasValue || value < max.Value ? value : max.Value;
+        }
+
+        /// <summary>把算出来的范围值写成文字（整数不带小数点，最多 3 位小数）；null → 空串。</summary>
+        private static string FormatBound(double? value)
+        {
+            return value.HasValue
+                ? Math.Round(value.Value, 3).ToString("0.###", CultureInfo.InvariantCulture)
+                : string.Empty;
+        }
+
+        /// <summary>
+        /// 特注寸法归一化：全角转半角、去空白、转大写（复用 <see cref="NormalizeKey"/>），
+        /// 再把 <c>≦ ≧ ≤ ≥ ＜ ＞</c> 统一成 <c>&lt;= &gt;= &lt; &gt;</c>。
+        /// </summary>
+        private static string NormalizeSpecialSize(string value)
+        {
+            string text = NormalizeKey(value);
+
+            if (text.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(text.Length + 8);
+
+            foreach (char ch in text)
+            {
+                switch (ch)
+                {
+                    case '≦':
+                    case '≤':
+                        builder.Append("<=");
+                        break;
+                    case '≧':
+                    case '≥':
+                        builder.Append(">=");
+                        break;
+                    case '＜':
+                        builder.Append('<');
+                        break;
+                    case '＞':
+                        builder.Append('>');
+                        break;
+                    default:
+                        builder.Append(ch);
+                        break;
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>
+        /// 把归一化后的特注寸法切成「数字 / 不等号 / Ｈ・Ｗ」记号，其它字（括弧、「かつ」等）直接丢掉。
+        /// </summary>
+        private static List<SpecialSizeToken> TokenizeSpecialSize(string specialSize)
+        {
+            List<SpecialSizeToken> tokens = new List<SpecialSizeToken>();
+            string text = NormalizeSpecialSize(specialSize);
+            int index = 0;
+
+            while (index < text.Length)
+            {
+                char ch = text[index];
+
+                if (char.IsDigit(ch) || ch == '.')
+                {
+                    int start = index;
+
+                    while (index < text.Length && (char.IsDigit(text[index]) || text[index] == '.'))
+                    {
+                        index++;
+                    }
+
+                    tokens.Add(new SpecialSizeToken(SpecialSizeTokenKind.Number,
+                        text.Substring(start, index - start)));
+
+                    continue;
+                }
+
+                if (ch == '<' || ch == '>' || ch == '=')
+                {
+                    int start = index;
+
+                    while (index < text.Length &&
+                        (text[index] == '<' || text[index] == '>' || text[index] == '='))
+                    {
+                        index++;
+                    }
+
+                    tokens.Add(new SpecialSizeToken(SpecialSizeTokenKind.Operator,
+                        text.Substring(start, index - start)));
+
+                    continue;
+                }
+
+                if (ch == 'H' || ch == 'W')
+                {
+                    tokens.Add(new SpecialSizeToken(SpecialSizeTokenKind.Axis, ch.ToString()));
+                    index++;
+
+                    continue;
+                }
+
+                index++;
+            }
+
+            return tokens;
+        }
+
+        /// <summary>特注寸法切出来的记号种类。</summary>
+        private enum SpecialSizeTokenKind
+        {
+            /// <summary>数字（含小数）。</summary>
+            Number,
+
+            /// <summary>不等号（<c>&lt;= &gt;= &lt; &gt; =</c>）。</summary>
+            Operator,
+
+            /// <summary>Ｈ / Ｗ。</summary>
+            Axis
+        }
+
+        /// <summary>特注寸法切出来的一个记号。</summary>
+        private struct SpecialSizeToken
+        {
+            public SpecialSizeToken(SpecialSizeTokenKind kind, string text)
+            {
+                Kind = kind;
+                Text = text;
+            }
+
+            public SpecialSizeTokenKind Kind { get; private set; }
+
+            public string Text { get; private set; }
+        }
+
+        // ── 追加不要 ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 明细里带「追加不要」这类字样（写在 品種 / 部品名 / 枠区分 / 部品コード /
+        /// 追加対応特注寸法 任一处）→ 这张 Excel 明确说不要追加，整条跳过。
+        /// </summary>
+        private static bool IsNoNeedEntry(CmdTzEntry entry)
+        {
+            if (entry == null)
+            {
+                return false;
+            }
+
+            return ContainsNoNeedMark(entry.Variety) || ContainsNoNeedMark(entry.PartName) ||
+                ContainsNoNeedMark(entry.FrameKind) || ContainsNoNeedMark(entry.PartCode) ||
+                ContainsNoNeedMark(entry.SpecialSize);
+        }
+
+        /// <summary>
+        /// 文字里是否含 <see cref="NoNeedMarks"/> 里的任一个；判定用 <see cref="NormalizeKey"/>
+        /// （全角转半角、去空白、转大写），所以「追加 不要」这种中间带空格的写法也能命中。
+        /// <para>
+        /// 【CMD 分析】最前面的「特注品 CSV 生成」也用它：Excel 部品表里写着「追加不要」的行
+        /// 不写进 <c>特注品.csv</c>（与第 4 步 tz.json 的口径一致）。
+        /// </para>
+        /// </summary>
+        internal static bool ContainsNoNeedMark(string value)
+        {
+            string key = NormalizeKey(value);
+
+            if (key.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (string mark in NoNeedMarks)
+            {
+                if (key.IndexOf(mark, StringComparison.Ordinal) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>往「命中品種」列表里加一个（忽略大小写去重）。</summary>
+        private static void AddKindText(IList<string> texts, string kindText)
+        {
+            string text = (kindText ?? string.Empty).Trim();
+
+            if (text.Length == 0)
+            {
+                return;
+            }
+
+            foreach (string existing in texts)
+            {
+                if (string.Equals(existing, text, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            texts.Add(text);
+        }
+
+        // ── 品種匹配 ─────────────────────────────────────────────────────────
+
+        /// <summary>把分类依据按空白 / 标点切成单词，返回「归一化词 → true」的集合。</summary>
+        private static Dictionary<string, bool> BuildTokenSet(string text)
+        {
+            Dictionary<string, bool> tokens = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string token in Tokenize(text))
+            {
+                string key = NormalizeKey(token);
+
+                if (key.Length > 0 && !tokens.ContainsKey(key))
+                {
+                    tokens.Add(key, true);
+                }
+            }
+
+            return tokens;
+        }
+
+        /// <summary>把分类依据按空白与常见标点切成单词（去掉空串）。</summary>
+        private static List<string> Tokenize(string text)
+        {
+            List<string> tokens = new List<string>();
+
+            if (string.IsNullOrEmpty(text))
+            {
+                return tokens;
+            }
+
+            string[] parts = text.Split(WordSeparators, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (string part in parts)
+            {
+                string token = part.Trim();
+
+                if (token.Length > 0)
+                {
+                    tokens.Add(token);
+                }
+            }
+
+            return tokens;
+        }
+
+        /// <summary>
+        /// 匹配用的归一化（与第 3 步 <c>CmdInstructionPartCollector</c> 同一套）：
+        /// 全角 ASCII（含全角数字 / 字母）转半角，去掉空白，统一大写。
+        /// </summary>
+        private static string NormalizeKey(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(value.Length);
+
+            foreach (char ch in value)
+            {
+                char current = ch;
+
+                if (ch >= '\uFF01' && ch <= '\uFF5E')
+                {
+                    current = (char)(ch - 0xFEE0);
+                }
+                else if (ch == '\u3000')
+                {
+                    current = ' ';
+                }
+
+                if (current == ' ' || current == '\t' || current == '\r' || current == '\n')
+                {
+                    continue;
+                }
+
+                builder.Append(current);
+            }
+
+            return builder.ToString().ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// 「品種」为空、或只写了占位内容（<c>―</c> / <c>-</c> / <c>／</c> / <c>・</c> /
+        /// <c>共 通</c> / <c>なし</c> / <c>無</c> …）= 没有品種，无法比对分类依据。
+        /// </summary>
+        private static bool IsBlankKind(string kindKey)
+        {
+            if (string.IsNullOrEmpty(kindKey))
+            {
+                return true;
+            }
+
+            if (string.Equals(kindKey, CmdInstructionPartCollector.SharedKindText, StringComparison.Ordinal) ||
+                string.Equals(kindKey, "なし", StringComparison.Ordinal) ||
+                string.Equals(kindKey, "ナシ", StringComparison.Ordinal) ||
+                string.Equals(kindKey, "無", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            foreach (char ch in kindKey)
+            {
+                if (ch == '-' || ch == '\u2015' || ch == '\u2014' || ch == '/' ||
+                    ch == '\u30FB' || ch == '~' || ch == '*' || ch == '_' || ch == '.')
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 部品コード 是否有效：去掉空白、全角转半角并大写后，必须至少含一个英文字母（A-Z）。
+        /// 因此「空」「―」「-」「/」「・」等占位符、纯数字都判为无效（与第 3 步同一规则）。
+        /// </summary>
+        private static bool IsValidPartCode(string value)
+        {
+            string key = NormalizeKey(value);
+
+            if (key.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (char ch in key)
+            {
+                if (ch >= 'A' && ch <= 'Z')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // ── 小工具 ───────────────────────────────────────────────────────────
+
+        /// <summary>取 JSON 对象里的文字字段（缺字段 / null 时返回空串，数字按不变文化转文字）。</summary>
+        private static string GetText(Dictionary<string, object> row, string key)
+        {
+            object value;
+
+            if (row == null || !row.TryGetValue(key, out value) || value == null)
+            {
+                return string.Empty;
+            }
+
+            string text = value as string;
+
+            return text != null
+                ? text.Trim()
+                : Convert.ToString(value, CultureInfo.InvariantCulture).Trim();
+        }
+
+        /// <summary>取 JSON 对象里的整数字段（读不出来时为 0）。</summary>
+        private static int GetInt(Dictionary<string, object> row, string key)
+        {
+            int value;
+
+            return int.TryParse(GetText(row, key), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                out value)
+                ? value
+                : 0;
+        }
+
+        /// <summary>加一条提示（空串忽略）。</summary>
+        private static void AddNote(IList<string> notes, string text)
+        {
+            if (notes == null || string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            notes.Add(text);
+        }
+
+        /// <summary>把文字列表拼成 <c>a、b、c</c>，超过 <paramref name="limit"/> 个时加「…」。</summary>
+        private static string JoinLimited(IList<string> texts, int limit)
+        {
+            if (texts == null || texts.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder();
+
+            for (int index = 0; index < texts.Count; index++)
+            {
+                if (index >= limit)
+                {
+                    builder.Append("…");
+
+                    break;
+                }
+
+                if (builder.Length > 0)
+                {
+                    builder.Append("、");
+                }
+
+                builder.Append(texts[index]);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>図番去空白（清单里可能写成 <c>H310 U10004</c>）。</summary>
+        private static string CleanDrawingNo(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(value.Length);
+
+            foreach (char ch in value)
+            {
+                if (char.IsWhiteSpace(ch) || (int)ch == 0xFEFF)
+                {
+                    continue;
+                }
+
+                builder.Append(ch);
+            }
+
+            return builder.ToString();
+        }
+
+        // ── CSV 读取（PdfInfoList.txt：RFC 4180 + BOM，字段内换行已压成 ~） ──
+
+        /// <summary>读一份 CSV（含表头行），交给 <see cref="ParseCsvLine"/> 按行拆分。</summary>
+        private static List<string[]> ReadCsv(string path)
+        {
+            List<string[]> rows = new List<string[]>();
+
+            foreach (string line in File.ReadAllLines(path, Encoding.UTF8))
+            {
+                rows.Add(ParseCsvLine(line).ToArray());
+            }
+
+            return rows;
+        }
+
+        /// <summary>按 CSV 规则拆分一行（支持双引号包裹与 "" 转义）。</summary>
+        private static List<string> ParseCsvLine(string line)
+        {
+            List<string> fields = new List<string>();
+            StringBuilder current = new StringBuilder();
+            bool inQuotes = false;
+
+            if (line == null)
+            {
+                return fields;
+            }
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+
+                if (inQuotes)
+                {
+                    if (c == '\"')
+                    {
+                        if (i + 1 < line.Length && line[i + 1] == '\"')
+                        {
+                            current.Append('\"');
+                            i++;
+                        }
+                        else
+                        {
+                            inQuotes = false;
+                        }
+                    }
+                    else
+                    {
+                        current.Append(c);
+                    }
+
+                    continue;
+                }
+
+                if (c == '\"')
+                {
+                    inQuotes = true;
+                }
+                else if (c == ',')
+                {
+                    fields.Add(current.ToString());
+                    current.Length = 0;
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+
+            fields.Add(current.ToString());
+
+            return fields;
+        }
+
+        /// <summary>按归一化后的列名找列下标（找不到返回 -1）。</summary>
+        private static int IndexOfHeader(string[] header, string name)
+        {
+            if (header == null || string.IsNullOrEmpty(name))
+            {
+                return -1;
+            }
+
+            string target = NormalizeHeader(name);
+
+            for (int index = 0; index < header.Length; index++)
+            {
+                if (string.Equals(NormalizeHeader(header[index]), target, StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>表头归一化：去掉所有空白（含换行）与 BOM 残留。</summary>
+        private static string NormalizeHeader(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(value.Length);
+
+            foreach (char c in value)
+            {
+                if (char.IsWhiteSpace(c) || (int)c == 0xFEFF)
+                {
+                    continue;
+                }
+
+                builder.Append(c);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>安全取格子（列不存在时返回空串）。</summary>
+        private static string Cell(string[] row, int index)
+        {
+            if (row == null || index < 0 || index >= row.Length || row[index] == null)
+            {
+                return string.Empty;
+            }
+
+            return row[index];
+        }
+
+        /// <summary>整行都是空串时视为空行。</summary>
+        private static bool IsEmptyRow(string[] row)
+        {
+            if (row == null)
+            {
+                return true;
+            }
+
+            foreach (string cell in row)
+            {
+                if (!string.IsNullOrWhiteSpace(cell))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>表头拼成一行文字（日志用）。</summary>
+        private static string JoinHeader(string[] header)
+        {
+            if (header == null || header.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(" / ", header);
+        }
+    }
+}

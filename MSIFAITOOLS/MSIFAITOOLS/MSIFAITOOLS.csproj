@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{C9B682EF-105F-4478-81DD-A78C865A2E6C}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>MSIFAITOOLS</RootNamespace>
+    <AssemblyName>MSIFAITOOLS</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+    <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+    <!--
+      用 PackageReference 还原带原生库的包时，NuGet 要求项目把会实际用到的 RID 显式写进
+      RuntimeIdentifiers，否则会报：
+        Your project file doesn't list 'win-x64' as a "RuntimeIdentifier".
+        You should add 'win-x64' to the "RuntimeIdentifiers" property in your project file
+        and then re-run NuGet restore.
+      OpenCvSharp4.runtime.win 只带 runtimes\win-x64、runtimes\win-x86 两套原生库，
+      而本程序固定 x64（见下方 PlatformTarget / Prefer32Bit），所以声明 win-x64。
+      win-x64 在 RID 图里继承 win，保留 win 仅为兼容以前的还原结果。
+    -->
+    <RuntimeIdentifiers>win;win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <!--
+      必须 x64：合并进来的零件分割源码用 OpenCvSharp4，而 OpenCvSharp4.runtime.win
+      只带 win-x64 原生库；AnyCPU 下在 32 位进程里会抛 BadImageFormatException。
+      Prefer32Bit 也要显式关掉，否则 AnyCPU 的 exe 默认以 32 位启动。
+    -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Configuration" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Deployment" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Xml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Form1.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.Designer.cs">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </Compile>
+    <Compile Include="PdfPreviewForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PdfPreviewForm.Designer.cs">
+      <DependentUpon>PdfPreviewForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="AiSettingsForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AiSettingsForm.Designer.cs">
+      <DependentUpon>AiSettingsForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="PartBasicInfoForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PartBasicInfoForm.Designer.cs">
+      <DependentUpon>PartBasicInfoForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="MemberNameReplacementForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="MemberNameReplacementForm.Designer.cs">
+      <DependentUpon>MemberNameReplacementForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="WindowLayoutHelper.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Services\PdfSplitService.cs" />
+    <Compile Include="Services\CadPartSplitterRunner.cs" />
+    <Compile Include="Services\PdfTextExtractor.cs" />
+    <Compile Include="Services\PdfLayoutAnalyzer.cs" />
+    <Compile Include="Services\PdfTextSelection.cs" />
+    <Compile Include="Services\PdfClassifier.cs" />
+    <Compile Include="Services\PartBasicInfo.cs" />
+    <Compile Include="Services\XyCoordinateIndex.cs" />
+    <!--
+      ★ AI 调用层已拆成独立工程 ..\MSIFAITOOLS.Ai\MSIFAITOOLS.Ai.csproj ★
+      下面这些文件现在由那个工程编译（本工程不再重复编译，否则同一类型会出现在两个
+      程序集里，报 CS0433「型が 2 つのアセンブリに存在します」）：
+        AiApiOptions.cs / AiSettingsStore.cs / ChatCompletionClient.cs /
+        AiPromptStore.cs / SpecialProductPromptStore.cs / MemberNamePromptStore.cs
+      它们的 namespace 仍是 MSIFAITOOLS.Services，所以本工程里所有调用点（包括
+      同命名空间下没有 using 的 Services\*.cs）都不用改，直接照旧使用。
+      本工程通过下面的 <ProjectReference> 引用，运行时会自动带上 MSIFAITOOLS.Ai.dll。
+    -->
+    <Compile Include="Services\AiPartResponseParser.cs" />
+    <Compile Include="Services\PluTablePageLocator.cs" />
+    <Compile Include="Services\AiPartAnalyzer.cs" />
+    <Compile Include="Services\PartBasicInfoRepository.cs" />
+    <Compile Include="Services\PartAnalysisService.cs" />
+    <Compile Include="Services\PartCoordinateVerifier.cs" />
+    <Compile Include="Services\CmdPartAnalyzer.cs" />
+    <Compile Include="Services\CmdPartAnalysisService.cs" />
+    <Compile Include="Services\CmdInstructionPartCollector.cs" />
+    <Compile Include="Services\CmdTzPartCollector.cs" />
+    <Compile Include="Services\CmdCalloutPartSplitter.cs" />
+    <Compile Include="Services\CmdAnalysisStep.cs" />
+    <Compile Include="Services\CmdUsageKindCollector.cs" />
+    <Compile Include="Services\XlsxSheetReader.cs" />
+    <Compile Include="Services\XlsxSheetWriter.cs" />
+    <Compile Include="Services\CmdPartCodeNormalizer.cs" />
+    <Compile Include="Services\CmdSpecialProductRule.cs" />
+    <Compile Include="Services\CmdSpecialProductCsvExporter.cs" />
+    <Compile Include="Services\CmdSpecialProductAiAdvisor.cs" />
+    <Compile Include="Services\PartsInfoIndex.cs" />
+    <Compile Include="Services\MemberNameAiAdvisor.cs" />
+    <Compile Include="Services\MemberPartCatalog.cs" />
+    <Compile Include="Services\MemberPartRepository.cs" />
+    <Compile Include="Services\MemberNameReplacementRepository.cs" />
+    <Compile Include="Services\MemberNameReplacementCatalog.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <!--
+    原 CadPartSplitter 工程的源码直接编译进本程序：一个 MSIFAITOOLS.exe 就能做零件分割，
+    不再需要外部 CadPartSplitter.exe 子进程。用「链接」而不是把文件复制过来，
+    保证两边只有一份源码，改一处即生效。
+
+    排除项及原因：
+      Program.cs                  → 自带 Main，会和本程序 Program.cs 的 Main 冲突（CS0017）
+      CommandLineRunner.cs        → 命令行模式（参数解析 + Console 输出），界面里用不到
+      MainForm.cs / .Designer.cs  → 分割工程自带的窗口（本程序用 Form1）
+      PdfInfoEditorForm.*         → 上面那个窗口的部品表编辑对话框
+                                    （GuiSettings.cs 不排除：它只依赖 DetectorOptions，
+                                      不含窗口代码，SplitApi 的调用示例也会用到它）
+      PdfRenderer.cs              → 用 Docnet.Core 渲染；本工程改用 PdfiumViewer 重写
+                                    （见本工程 CadPartSplitter\PdfRenderer.cs），
+                                    否则 Docnet.Core 与 PdfiumViewer 的同名原生库
+                                    pdfium.dll 会在输出目录里互相覆盖
+  -->
+  <ItemGroup>
+    <!-- 合并后本工程自己的渲染实现（PdfiumViewer），API 与原 Docnet.Core 版一致 -->
+    <Compile Include="CadPartSplitter\PdfRenderer.cs" />
+    <Compile Include="..\CadPartSplitter\*.cs" Exclude="..\CadPartSplitter\Program.cs;..\CadPartSplitter\CommandLineRunner.cs;..\CadPartSplitter\MainForm.cs;..\CadPartSplitter\MainForm.Designer.cs;..\CadPartSplitter\PdfInfoEditorForm.cs;..\CadPartSplitter\PdfInfoEditorForm.Designer.cs;..\CadPartSplitter\PdfRenderer.cs;..\CadPartSplitter\DetectorOptions.cs">
+      <Link>CadPartSplitter\%(Filename)%(Extension)</Link>
+    </Compile>
+    <!--
+      DetectorOptions.cs 单独显式列出（上面通配符里已经 Exclude 掉，不会重复编译）。
+
+      原因：这个文件是所有分割参数的「单一真源」——GuiSettings.cs 的默认值、
+      SplitApi / BatchRunner / PartSplitterService 的参数类型都直接依赖它。
+      走通配符时，若某次项目加载 / 增量构建没有正确展开 ..\CadPartSplitter\*.cs，
+      CadPartSplitter 命名空间会由本工程的 CadPartSplitter\PdfRenderer.cs 顶住，
+      于是只报一条：
+        CS0234 型または名前空間の名前 'DetectorOptions' が名前空間 'CadPartSplitter' に存在しません
+      显式列出后，DetectorOptions 一定参与编译，不再受通配符展开结果影响。
+      以后在主工程里新增其他 .cs 仍由通配符自动带入，本行不必改动。
+    -->
+    <Compile Include="..\CadPartSplitter\DetectorOptions.cs" Link="CadPartSplitter\DetectorOptions.cs" />
+    <!-- Excel 部品表 AI 判定的提示语：编译进 exe 作兜底，同时复制到输出目录（可运行时修改、不用重新编译） -->
+    <EmbeddedResource Include="..\CadPartSplitter\Prompts\TzJsonAi.Prompt.txt">
+      <LogicalName>CadPartSplitter.Prompts.TzJsonAi.Prompt.txt</LogicalName>
+    </EmbeddedResource>
+    <None Include="..\CadPartSplitter\Prompts\TzJsonAi.Prompt.txt">
+      <Link>Prompts\TzJsonAi.Prompt.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="App.config" />
+    <None Include="部品マスタ\Tbl_部品マスタ.csv">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <!-- 部材部品マスタ（【AI 分析】部材名判定用）：AI 运行时读输出目录里的这一份 -->
+    <None Include="部材部品\部材部品.csv">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      Form1.resx 仍编进 exe。
+      三个 AI 提示语（Prompts\*.txt）的 <EmbeddedResource> 已移到 MSIFAITOOLS.Ai 工程：
+      各 PromptStore 用 typeof(...).Assembly 读内嵌资源，资源跟着 Store 一起搬到那个程序集，
+      LogicalName 保持 MSIFAITOOLS.Prompts.*，所以加载代码一行都不用改。
+
+      下面的 <None> 项必须保留：「可运行时编辑的提示语副本」仍要复制到本 exe 目录的
+      Prompts\ 下，运行时优先读这份外部文件（改完不用重新编译）。
+    -->
+    <EmbeddedResource Include="Form1.resx">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </EmbeddedResource>
+    <None Include="hiroidashiData\h_H310_三方枠.xlsx">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="Prompts\AiPartAnalyzer.Prompt.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Prompts\MemberNameAdvisor.Prompt.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Prompts\SpecialProductAdvisor.Prompt.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+    <PackageReference Include="PdfiumViewer" Version="2.13.0" />
+    <PackageReference Include="PdfiumViewer.Native.x86.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
+    <!-- 合并进来的零件分割（原 CadPartSplitter 工程）：图像处理 + 部品表 Excel 读取 -->
+    <PackageReference Include="OpenCvSharp4" Version="4.10.0.20240616" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20240616" />
+    <PackageReference Include="ExcelDataReader" Version="3.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 部材部品\部材部品.csv 已作为 None + CopyToOutputDirectory 引入（见上），
+         不再需要 VS 自动生成的空文件夹条目 -->
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      AI 调用层（独立程序集）：配置读取 / HTTP 客户端 / 提示语加载。
+      依赖方向 → 只允许本工程引用它，它不认识 Form、业务实体和数据库。
+    -->
+    <ProjectReference Include="..\MSIFAITOOLS.Ai\MSIFAITOOLS.Ai.csproj">
+      <Project>{7F3B9C41-2D8E-4A6B-9C15-8E0D4B6A1F72}</Project>
+      <Name>MSIFAITOOLS.Ai</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

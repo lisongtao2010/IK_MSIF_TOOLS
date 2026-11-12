@@ -1,0 +1,49 @@
+{
+  // 资源管理器中隐藏的目录 / 文件（不删除，只是不显示）
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true,
+    "**/Debug": true,
+    "**/Release": true,
+    "**/x64": true,
+    "**/x86": true,
+    "**/.vs": true,
+    "**/packages": true,
+    "**/TestResults": true,
+    "**/coverage": true,
+    "**/node_modules": true,
+    "**/*.user": true,
+    "**/*.suo": true
+  },
+
+  // 全局搜索（Ctrl+Shift+F）中排除的目录 / 文件
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true,
+    "**/Debug": true,
+    "**/Release": true,
+    "**/x64": true,
+    "**/x86": true,
+    "**/.vs": true,
+    "**/packages": true,
+    "**/TestResults": true,
+    "**/coverage": true,
+    "**/node_modules": true,
+    "**/*.min.js": true,
+    "**/*.min.css": true,
+    "**/*.map": true,
+    "**/*.dll": true
+  },
+
+  // 文件监视器排除，减少大目录带来的 CPU / 内存占用
+  "files.watcherExclude": {
+    "**/bin/**": true,
+    "**/obj/**": true,
+    "**/Debug/**": true,
+    "**/Release/**": true,
+    "**/.vs/**": true,
+    "**/packages/**": true,
+    "**/TestResults/**": true,
+    "**/node_modules/**": true
+  }
+}

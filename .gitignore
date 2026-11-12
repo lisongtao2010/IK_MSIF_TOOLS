@@ -1,0 +1,134 @@
+# ============================================================
+# .NET / Visual Studio 常规忽略规则
+# 说明：本文件只影响 Git 版本控制，不影响 VS Code 的显示与搜索。
+#       如相关目录已被 Git 跟踪，需要执行一次
+#       git rm -r --cached <目录>  使其失效。
+# ============================================================
+
+# ---------- 构建输出 ----------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+build/
+artifacts/
+publish/
+[Oo]ut/
+_UpgradeReport_Files/
+*.dll
+*.exe
+*.pdb
+*.mdb
+*.ilk
+*.exp
+*.lib
+*.obj
+*.idb
+
+# 注意：如果项目需要提交第三方 dll，请在其后使用 ! 规则单独放行，
+# 例如：!libs/**.dll
+
+# ---------- Visual Studio ----------
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+*.ncb
+*.sdf
+*.opensdf
+*.cache
+*.VC.db
+*.VC.VC.opendb
+*.psess
+*.vsp
+*.vspx
+*.vspscc
+*.vssscc
+*.svclog
+*.coverage
+*.coveragexml
+*.binlog
+
+# ---------- NuGet ----------
+packages/
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+
+# ---------- 测试与覆盖率 ----------
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+[Cc]overage*/
+*.trx
+*.testsettings
+[Tt]est[Rr]esults/
+BenchmarkDotNet.Artifacts/
+
+# ---------- ReSharper / Rider ----------
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings
+.idea/
+
+# ---------- 日志与临时文件 ----------
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.cache
+*.pid
+*.seed
+*.orig
+*.rej
+*.swp
+*~
+ehthumbs.db
+Thumbs.db
+$RECYCLE.BIN/
+desktop.ini
+
+# ---------- 系统文件 ----------
+.DS_Store
+.DS_Store?
+
+# ---------- 编辑器 ----------
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# ---------- 密钥与本地配置（按需启用） ----------
+# *.pfx
+# *.snk
+# *.pubxml
+# *.publishproj
+# appsettings.*.local.json
+# secrets.json
+# .env
+# .env.*
+
+# ---------- 发布产物 ----------
+*.publishsettings
+*.pubxml
+*.publishproj
+PublishScripts/
+/MSIFAITOOLS/CadPartSplitter/H310U10004_parts
+MSIFAITOOLS/CadPartSplitter/H310U10004.pdf
+MSIFAITOOLS/CadPartSplitter/H310C10004.pdf
+MSIFAITOOLS/CadPartSplitter/H310A20009.pdf
+/MSIFAITOOLS/CadPartSplitter/_test
+/MSIFAITOOLS/CadPartSplitter/_verify_text
