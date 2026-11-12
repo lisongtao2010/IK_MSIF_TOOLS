@@ -33,7 +33,7 @@ namespace CadPartSplitter
     ///   --no-lt-step1    关闭「部品表下表 / 左上表参照展开」（不生成 01_アッセンブリ図_部品機能情報.csv）
     ///   --no-lt-step2    关闭「品種 × 多列重复表摊平」（不生成 02_要領図_部品機能情報.csv）
     ///   --no-assembly-yoryo 关闭「要領図一覧」（不生成 01_アッセンブリ図_要領図.csv）
-    ///   --no-tz         关闭「Excel 部品表」（不读图纸文件夹里的 Excel，不生成 classify\tz.json）
+    ///   --no-tz         关闭「特注品部品表」（不读图纸文件夹里第 5 位是 Z 的特注品文件，不生成 classify\特注品.json）
     ///   --area &lt;值&gt;      最小轮廓面积阈值（默认 25000）
     ///   --pad &lt;值&gt;       外接框扩展像素（默认 30）
     ///   --kw &lt;值&gt;        膨胀核宽度（默认 60）
@@ -326,8 +326,9 @@ namespace CadPartSplitter
                 string arg = args[i];
                 string lowerArg = arg.ToLowerInvariant();
 
-                // --tz-ai / --tz-ai=always / --tz-ai always：打开「Excel 部品表的 AI 判定与补足」
-                // （默认 fallback = 规则一条都没收到时才调；always = 每张表都复核一遍）
+                // --tz-ai / --tz-ai=always / --tz-ai always：显式声明「特注品部品表的 AI 判定与补足」
+                // （默认已经是 always；fallback = 规则一条都没收到时才调，省钱）
+                // 反向开关是 --no-tz-ai（见下）。
                 if (lowerArg == "--tz-ai" || lowerArg.StartsWith("--tz-ai=", StringComparison.Ordinal))
                 {
                     opts.TzAiMode = TzAiMode.Fallback;
@@ -463,12 +464,13 @@ namespace CadPartSplitter
                         break;
 
                     case "--no-tz":
-                        // 关闭「Excel 部品表」（不读图纸文件夹里的 Excel，不生成 classify\tz.json）
+                        // 关闭「特注品部品表」（不读图纸文件夹里第 5 位是 Z 的特注品文件，不生成 classify\特注品.json）
                         opts.BuildTzJson = false;
                         break;
 
                     case "--no-tz-ai":
-                        // 关闭「Excel 部品表的 AI 判定与补足」（本来就是默认关闭，写出来便于脚本显式声明）
+                        // 关闭「特注品部品表的 AI 判定与补足」（默认是打开的；关掉后只走规则，
+                        // 非 Excel 的特注品文件没有规则可走，会跳过）
                         opts.TzAiMode = TzAiMode.Off;
                         break;
 
@@ -555,11 +557,11 @@ namespace CadPartSplitter
             Console.WriteLine("  --no-lt-step1   关闭「部品表下表 / 左上表参照展开」（不生成 01_アッセンブリ図_部品機能情報.csv）");
             Console.WriteLine("  --no-lt-step2   关闭「品種 × 多列重复表摊平」（不生成 02_要領図_部品機能情報.csv）");
             Console.WriteLine("  --no-assembly-yoryo 关闭「要領図一覧」（不生成 01_アッセンブリ図_要領図.csv）");
-            Console.WriteLine("  --no-tz         关闭「Excel 部品表」（不读图纸文件夹里的 Excel，不生成 classify\\tz.json）");
-            Console.WriteLine("  --tz-ai         打开「Excel 部品表的 AI 判定与补足」：规则一条明细都没收到时才请 AI 看一遍");
-            Console.WriteLine("  --tz-ai always  每张部品表都请 AI 复核一遍，规则漏掉的明细补进来（调用次数 / 费用最高）");
+            Console.WriteLine("  --no-tz         关闭「特注品部品表」（不读图纸文件夹里第 5 位是 Z 的特注品文件，不生成 classify\\特注品.json）");
+            Console.WriteLine("  --tz-ai         打开「特注品部品表的 AI 判定与补足」（默认已打开）：规则一条明细都没收到时才请 AI 看一遍");
+            Console.WriteLine("  --tz-ai always  每张部品表都请 AI 复核一遍，规则漏掉的明细补进来（默认值；调用次数 / 费用最高）");
             Console.WriteLine("                  需要密钥：环境变量 MSIF_AI_API_KEY / MSIFAITOOLS 的【AI 设置】/ App.config 的 AiApiKey");
-            Console.WriteLine("  --no-tz-ai      关闭「Excel 部品表的 AI 判定与补足」（默认就是关闭）");
+            Console.WriteLine("  --no-tz-ai      关闭「特注品部品表的 AI 判定与补足」：只走规则；非 Excel 的特注品文件没有规则可走，会跳过");
             Console.WriteLine("  --area  <N>    最小轮廓面积（默认 25000）");
             Console.WriteLine("  --pad   <N>    外接框扩展像素（默认 30）");
             Console.WriteLine("  --kw    <N>    膨胀核宽度（默认 60）");
@@ -590,8 +592,9 @@ namespace CadPartSplitter
             Console.WriteLine("                    / --no-assembly-yoryo 可关闭）");
             Console.WriteLine("  <输出根目录> 下的 drawing_list.csv（図番号 / 文件名 / 分类）");
             Console.WriteLine("  （--list 时随批量处理一并生成；--list-only 时只生成它，不做分割）");
-            Console.WriteLine("  <输出根目录>\\classify\\tz.json");
-            Console.WriteLine("  （Excel 部品表：图纸文件夹里各 Excel「カメラ」sheet 的");
+            Console.WriteLine("  <输出根目录>\\classify\\特注品.json");
+            Console.WriteLine("  （特注品部品表：图纸文件夹里「文件名第 5 位是 Z」的文件 ——");
+            Console.WriteLine("    Excel 读「カメラ」sheet，其它（PDF 文字层 / 文本类）由 AI 判读；");
             Console.WriteLine("    品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法，一条明细一行；");
             Console.WriteLine("    与 PdfInfoList.txt 同目录、同样整批共用一份，全部图纸跑完后一次生成）");
             Console.WriteLine();

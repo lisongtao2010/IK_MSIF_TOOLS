@@ -59,14 +59,157 @@ namespace MSIFAITOOLS
             _aiButtonText = btnAiAnalyze.Text;
             _cmdButtonText = btnCmdAnalyze.Text;
 
-            // 六个子按钮的文字统一取自 CmdAnalysisSteps（步骤名的唯一定义处），保证按钮 / 日志叫法一致
-            btnCmdStep1.Text = CmdAnalysisSteps.ButtonText(CmdAnalysisStepKind.Assembly);
-            btnCmdStep2.Text = CmdAnalysisSteps.ButtonText(CmdAnalysisStepKind.CalloutSplit);
-            btnCmdStep3.Text = CmdAnalysisSteps.ButtonText(CmdAnalysisStepKind.YoryoAppend);
-            btnCmdStep4.Text = CmdAnalysisSteps.ButtonText(CmdAnalysisStepKind.TzAppend);
-            btnCmdStep5.Text = CmdAnalysisSteps.ButtonText(CmdAnalysisStepKind.PartCode);
-            btnCmdStep6.Text = CmdAnalysisSteps.ButtonText(CmdAnalysisStepKind.UsageKind);
+            // 【CMD 分析】主按钮 = 一次跑完（第 1~7 步）；
+            // 主按钮下面一排 8 个子按钮：1 个前置校验（不写库）+ 7 个单步按钮（鼠标悬停显示该步说明）。
+            // 按钮文字 / 说明都取自 CmdAnalysisSteps（步骤名的唯一定义处），这里只做界面绑定。
+            InitializeCmdStepButtons();
         }
+
+        /// <summary>
+        /// 【CMD 分析】主按钮下面那一排子步骤按钮的界面绑定：文字与鼠标悬停说明。
+        /// 顺序固定为 <b>0 前置校验 → 1 特注品JSON → 2 装配图入库 → 3 圈号拆分 →
+        /// 4 要領図追加 → 5 特注登录 → 6 部品コード → 7 使い分け</b>
+        /// （0 = 只检查不写库，不属于第 1~7 步；1~7 = 点一次【CMD 分析】的执行顺序）；
+        /// 名字 / 代号 / 说明 / 「日志里的步骤名」全部取自 <see cref="CmdAnalysisSteps"/>（步骤名唯一定义处），
+        /// 这里只按按钮宽度换成短名。
+        /// <para>
+        /// 第 1 步 特注品.json 作成（原「3 特注品CSV+tz」的前半段）与第 5 步 特注品部品登录
+        /// （原同一步的后半段）拆成两个独立步骤：前者只由 xlsx 生成 特注品.csv /
+        /// classify\特注品.json（<b>不写库</b>），后者读 JSON 把命中的明细写库；
+        /// 中间隔着 2~4 步（装配图入库 / 圈号拆分 / 要領図追加）—— 因为「登录」必须
+        /// 在装配图的行写好之后才能加工。
+        /// </para>
+        /// </summary>
+        private void InitializeCmdStepButtons()
+        {
+            // 「2 装配图入库」的悬停说明是一整段（原件怎么认 / 程序怎么认），默认 5 秒不够读完，
+            // 这里把停留时间放宽到 30 秒（Win32 的延时上限 32767ms）、弹出延迟缩短一点（对所有子按钮生效）。
+            tipCmdStep.AutoPopDelay = 30000;
+            tipCmdStep.InitialDelay = 300;
+            tipCmdStep.ReshowDelay = 100;
+            tipCmdStep.ShowAlways = true;
+
+            // 控件名保留历史命名（btnCmdStep1/2/3/4/5/7/8 + 新增 btnCmdStep9）：
+            // 按钮上的编号由 shortNames 决定（0 = 前置校验，1~7 = 第 1~7 步），控件名不再与编号一一对应。
+            Button[] buttons = new Button[]
+            {
+                btnCmdStep1, btnCmdStep9, btnCmdStep2, btnCmdStep3,
+                btnCmdStep4, btnCmdStep5, btnCmdStep7, btnCmdStep8
+            };
+
+            CmdAnalysisStepKind[] kinds = new CmdAnalysisStepKind[]
+            {
+                CmdAnalysisStepKind.Preflight, CmdAnalysisStepKind.SpecialProductJson,
+                CmdAnalysisStepKind.Assembly, CmdAnalysisStepKind.CalloutSplit,
+                CmdAnalysisStepKind.YoryoAppend, CmdAnalysisStepKind.TzParts,
+                CmdAnalysisStepKind.PartCode, CmdAnalysisStepKind.UsageKind
+            };
+
+            // 按钮只有 98px 宽，用短名；完整名字 / 说明放在鼠标悬停提示里
+            string[] shortNames = new string[]
+            {
+                "0 前置校验", "1 特注品JSON", "2 装配图入库", "3 圈号拆分",
+                "4 要領図追加", "5 特注登录", "6 部品コード", "7 使い分け"
+            };
+
+            for (int index = 0; index < buttons.Length; index++)
+            {
+                buttons[index].Text = shortNames[index];
+                tipCmdStep.SetToolTip(buttons[index], BuildCmdStepToolTip(index, kinds[index]));
+            }
+
+            tipCmdStep.SetToolTip(btnCmdAnalyze,
+                "【CMD 分析】点一次依次跑完 7 步：\r\n" +
+                "第 1 步 特注品.json 作成 → 第 2 步 装配图部品入库 → … → 第 7 步 使い分け自動設定。" +
+                "\r\n\r\n下面一排 8 个小按钮（0 前置校验 + 第 1~7 步）各自只跑一步，鼠标放上去可以看该步的说明。");
+        }
+
+        /// <summary>
+        /// 生成某个子步骤按钮的鼠标悬停说明：按钮编号 + 完整步骤名（代号、是否写库）+
+        /// 这一步做什么 + 日志里会写的「执行步骤」行；<b>装配图入库</b>再追加一段
+        /// 「原件怎么认（人工）+ 程序怎么认（代码实际路径）」的详细说明（见 <see cref="BuildCmdStepHowTo"/>）。
+        /// </summary>
+        /// <param name="buttonNumber">按钮上的编号（0 = 前置校验，1~7 = 第 N 步）。</param>
+        /// <param name="kind">该按钮只跑的那一步。</param>
+        private static string BuildCmdStepToolTip(int buttonNumber, CmdAnalysisStepKind kind)
+        {
+            CmdAnalysisStep step = CmdAnalysisSteps.GetStep(kind);
+
+            if (step == null)
+            {
+                return string.Empty;
+            }
+
+            // 不写库的只有 2 个：前置校验（只检查）与第 1 步 特注品.json 作成（只生成 CSV / JSON）
+            bool writesDatabase = kind != CmdAnalysisStepKind.Preflight &&
+                kind != CmdAnalysisStepKind.SpecialProductJson;
+
+            string text = string.Format("按钮 {0} · {1}（{2}，{3}）\r\n{4}\r\n\r\n点一次只跑这一步 → {5}",
+                buttonNumber, step.Label, step.Code, writesDatabase ? "写库" : "不写库",
+                step.Purpose, CmdAnalysisSteps.DescribeRun(kind));
+
+            string howTo = BuildCmdStepHowTo(kind);
+
+            return howTo.Length == 0 ? text : text + "\r\n\r\n" + howTo;
+        }
+
+        /// <summary>
+        /// 某些步骤的一句话说明不够用时，再给一段「原件怎么认 / 程序怎么认」的正文。
+        /// 目前只有「装配图部品入库」有（<see cref="AssemblyStepHowTo"/>），其它步骤返回空串，
+        /// 悬停提示保持原来的三行。
+        /// </summary>
+        /// <param name="kind">该按钮只跑的那一步。</param>
+        private static string BuildCmdStepHowTo(CmdAnalysisStepKind kind)
+        {
+            return kind == CmdAnalysisStepKind.Assembly ? AssemblyStepHowTo : string.Empty;
+        }
+
+        /// <summary>
+        /// 「2 装配图入库」按钮的悬停补充说明。
+        /// <para>
+        /// <b>原件怎么认（人工）</b>：看 アッセンブリ図 的 PDF，部品基本信息表一般画在<b>右上角</b>
+        /// （番号 / 部品名 / 枠区分 / 員数 / 部品コード 一行表头）；表里若写着「参照下表」「参照左表」
+        /// 这类字样，那不是部品コード，而是指向旁边另一张表（多是 見込み / 部品コード 两列），
+        /// 要把被参照那张表的 部品コード 逐条取过来 —— 所以一个部品可能变成多条。
+        /// </para>
+        /// <para>
+        /// <b>程序怎么认（不调用 AI，代码实际路径）</b>：只处理
+        /// <c>classify\PdfInfoList.txt</c> 里分类为「アッセンブリ図」的 PDF →
+        /// CadPartSplitter 已把 PDF 拆成 <c>tables\table_NN.csv</c>，<b>表头同时含「番号」与「部品名」</b>
+        /// 的那张即部品基本信息表（<c>LtStep1Builder</c> 按表头认，不按页面坐标，右上角只是通常在那儿）→
+        /// 部品コード 格写「下表参照」往后找、「左上表参照」往前找第一张「表头含 部品コード 且有明细」的
+        /// 参照表，把它的 部品コード 逐条复制到当前行（其它列沿用原行）→ 生成
+        /// <c>01_アッセンブリ図_部品機能情報.csv</c> → 本按钮按列名映射建行、<c>xy.txt</c> 校验、
+        /// 填 部材名、标 特注品、写库（先删后插）。
+        /// </para>
+        /// </summary>
+        private const string AssemblyStepHowTo =
+            "【人怎么认】（人工识别方法）\r\n" +
+            " · 打开分类为「アッセンブリ図」（組立図）的 PDF，部品基本信息表一般在右上角：\r\n" +
+            "   表头是 番号 / 部品名 / 枠区分 / 員数 / 部品コード 这一类；表长什么样、有几列都行。\r\n" +
+            " · 表里某行的 部品コード 写着「参照下表」「参照左表」「左上表参照」这类字样时，\r\n" +
+            "   那不是部品コード，而是指向旁边另一张小表（多是 見込み / 部品コード 两列）：\r\n" +
+            "   要把被参照那张表的 部品コード 逐条搬过来，其它列不动 —— 一个部品会变成多条。\r\n" +
+            " · 一张图有多张这种表（多页 / 多个视图）时都要收；参照表本身不收成明细。\r\n" +
+            "\r\n" +
+            "【程序怎么认】（程序识别方法：不调用 AI，代码实际路径）\r\n" +
+            " · 只看 classify\\PdfInfoList.txt 里「图面分类 = アッセンブリ図」的 PDF，图番 = PDF 文件名。\r\n" +
+            " · 主表：CadPartSplitter 已把 PDF 拆成 tables\\table_NN.csv，表头（去掉空格 / 换行）\r\n" +
+            "   同时含「番号」与「部品名」的那张就是部品基本信息表 —— 按表头认，不看它在页面\r\n" +
+            "   的位置（右上角只是通常画在那儿）；部品コード 列可有可无，没有就留空。\r\n" +
+            " · 参照：程序认的关键词只有两个 —— 部品コード 里含「下表参照」→ 往后找第一张「表头含\r\n" +
+            "   部品コード 且有明细」的表；含「左上表参照」→ 往前找；找到就把它的每条 部品コード\r\n" +
+            "   复制到当前行（番号 / 部品名 / 枠区分 / 員数 / 寸法 沿用原行），找不到只留原行 + 日志 WARN。\r\n" +
+            "   注：「参照下表」「参照左表」「上表参照」这类别的写法目前不认（不展开、也不报 WARN）。\r\n" +
+            " · 建行：按列名映射（番号 / 部品名·部品名称·品名·名称 / 部品コード·コード /\r\n" +
+            "   枠区分·枠 / 員数·数量·個数 / 基本寸法 / 切断寸法·カット寸法），不按列号；\r\n" +
+            "   同页「番号 + 部品コード」只留一条。\r\n" +
+            " · 校验：CSV 里的字能在同目录 xy.txt 的坐标里找到 → 校验状态 = 已校验。\r\n" +
+            " · 部材名：用 番号 到 parts_info.json 的 callouts 找圈号 → 取该零件图的 texts，\r\n" +
+            "   去掉含数字的与「A部」这类位置标记 → 用 | 连接（例：番号 4 → 縦枠）。\r\n" +
+            " · 特注：図番（PDF 文件名）第 5 位是 Z → 整张表记 特注品；非特注行的 数量 / 切断寸法 清空。\r\n" +
+            " · 写库：部品基本信息 表按 図番 先删后插（唯一索引 図番 + 页码 + 番号 + 部品コード）。\r\n" +
+            " · 详细原理与排查：docs\\cmd-steps\\03-装配图入库.md";
 
         /// <summary>
         /// 窗体首次显示：输出启动信息并显示内置 PDF 引擎版本（已不再依赖 Python）。
@@ -376,27 +519,30 @@ namespace MSIFAITOOLS
         /// <summary>
         /// 切换执行期间界面控件的可用状态。
         /// </summary>
-        private void SetRunning(bool running)
+        /// <param name="running">true = 进入运行态（按钮置灰、进度条跑马灯）。</param>
+        /// <param name="renameButtons">true = 同时把三个主按钮文字改成「…中」；前置校验这种只读检查传 false。</param>
+        private void SetRunning(bool running, bool renameButtons = true)
         {
             _isRunning = running;
 
             btnStart.Enabled = !running;
             btnAiAnalyze.Enabled = !running;
             btnCmdAnalyze.Enabled = !running;
-            // 六个子按钮（第 1 / 2 / 3 / 4 / 5 / 6 步）执行期间只置灰，文字保持不变
             btnCmdStep1.Enabled = !running;
+            btnCmdStep9.Enabled = !running;
             btnCmdStep2.Enabled = !running;
             btnCmdStep3.Enabled = !running;
             btnCmdStep4.Enabled = !running;
             btnCmdStep5.Enabled = !running;
-            btnCmdStep6.Enabled = !running;
+            btnCmdStep7.Enabled = !running;
+            btnCmdStep8.Enabled = !running;
             btnAiSettings.Enabled = !running;
             btnBrowse.Enabled = !running;
             txtFolder.Enabled = !running;
             chkCadSplit.Enabled = !running;
-            btnStart.Text = running ? "分解中..." : _startButtonText;
-            btnAiAnalyze.Text = running ? "分析中..." : _aiButtonText;
-            btnCmdAnalyze.Text = running ? "分析中..." : _cmdButtonText;
+            btnStart.Text = running && renameButtons ? "分解中..." : _startButtonText;
+            btnAiAnalyze.Text = running && renameButtons ? "分析中..." : _aiButtonText;
+            btnCmdAnalyze.Text = running && renameButtons ? "分析中..." : _cmdButtonText;
 
             if (running)
             {
@@ -1046,77 +1192,245 @@ namespace MSIFAITOOLS
         /// 01_アッセンブリ図_部品機能情報.csv（&lt;输出根目录&gt;\&lt;図番号&gt;\…，旧名 LT_STEP1.csv），
         /// 以 xy.txt 校验后登录到 SQLite 部品基本信息表（与【AI 分析】的「部材名AI推荐」同一张表）。
         ///
-        /// 点一次依次走「最前面 1 步 + 第 1~6 步」（名字见 <see cref="CmdAnalysisSteps"/>）：
-        /// <b>最前面</b> 特注品 CSV 生成（PDF 文件夹下文件名第 5 位是 Z 的 xlsx →
-        /// <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>）→
-        /// 第 1 步 装配图部品入库 → 第 2 步 圈号拆分 → 第 3 步 要領図部品追加 → 第 4 步 tz.json 部品追加 →
-        /// 第 5 步 部品コード正規化 → 第 6 步 使い分け自動設定；日志前缀为「【第 N 步 · 名字】」
-        /// （最前面那步是「【最前面 · 特注品 CSV 生成】」，不占第 N 步编号）。
-        /// 第 2 / 3 步按 PdfInfoList.txt 的「分类依据」与 01_アッセンブリ図_要領図.csv →
-        /// 各要領図的 02_要領図_部品機能情報.csv 追加部品；第 4 步按同一份分类依据把 classify\tz.json
-        /// （Excel 部品表）里「品種」命中的明细追加进来；第 5 步按 部品マスタ\Tbl_部品マスタ.csv 的「色」
+        /// 点一次依次走「第 1~7 步」（名字见 <see cref="CmdAnalysisSteps"/>）：
+        /// <b>第 1 步</b> 特注品.json 作成（PDF 文件夹下文件名第 5 位是 Z 的 xlsx →
+        /// <c>AiAppData\&lt;文件名&gt;\特注品.csv</c> + <c>classify\特注品.json</c>，<b>不写库</b>）→
+        /// 第 2 步 装配图部品入库 → 第 3 步 圈号拆分 → 第 4 步 要領図部品追加 →
+        /// 第 5 步 特注品部品登录（读 特注品.json，把「品種」命中分类依据的明细写库）→
+        /// 第 6 步 部品コード正規化 → 第 7 步 使い分け自動設定；日志前缀为「【第 N 步 · 名字】」。
+        /// 第 4 步按同一份分类依据把 01_アッセンブリ図_要領図.csv →
+        /// 各要領図的 02_要領図_部品機能情報.csv 的部品追加进来；第 6 步按 部品マスタ\Tbl_部品マスタ.csv 的「色」
         /// 把部品コード 里的颜色换成 □、连续符号压成一个 □（撞键的行跳过 = 重複チェック）；
-        /// 第 6 步按（正規化後の）部品コード 把 hiroidashiData 里拾い出し表的「使い分け」填到同一部品的多行上，
+        /// 第 7 步按（正規化後の）部品コード 把 hiroidashiData 里拾い出し表的「使い分け」填到同一部品的多行上，
         /// 全部登录到同一张表。
         /// 登录后可在【分类结果】选中 PDF 行 →【部品信息】查看明细。
-        /// 步骤说明见 docs\CMD分析_步骤命名.md。
+        /// 步骤说明见 docs\cmd-steps\00-索引.md。
         /// </summary>
         private async void BtnCmdAnalyze_Click(object sender, EventArgs e)
         {
             await RunCmdAnalysisAsync(CmdAnalysisStepKind.All);
         }
 
-        /// <summary>子按钮【第 1 步 · 装配图部品入库】：只重跑第 1 步（读 01_アッセンブリ図_部品機能情報.csv → 入库）。</summary>
-        private async void BtnCmdStep1_Click(object sender, EventArgs e)
+        /// <summary>
+        /// 子按钮【0 前置校验】：只检查「能不能跑 CMD 分析」，不写数据库（见 <see cref="RunCmdPreflight"/>）。
+        /// </summary>
+        private void BtnCmdStep1_Click(object sender, EventArgs e)
+        {
+            RunCmdPreflight();
+        }
+
+        /// <summary>
+        /// 子按钮【1 特注品JSON】：只跑 第 1 步 · 特注品.json 作成（<c>S1</c>，<b>不写库</b>）——
+        /// 由 PDF 文件夹下文件名第 5 位是 Z 的 xlsx 生成 <c>特注品.csv</c> 并同步
+        /// <c>classify\特注品.json</c>，不碰数据库、也不需要「アッセンブリ図」。
+        /// </summary>
+        private async void BtnCmdStep9_Click(object sender, EventArgs e)
+        {
+            await RunCmdAnalysisAsync(CmdAnalysisStepKind.SpecialProductJson);
+        }
+
+        /// <summary>子按钮【2 装配图入库】：只跑 第 2 步 · 装配图部品入库（<c>S2</c>，写库）。</summary>
+        private async void BtnCmdStep2_Click(object sender, EventArgs e)
         {
             await RunCmdAnalysisAsync(CmdAnalysisStepKind.Assembly);
         }
 
-        /// <summary>子按钮【第 2 步 · 圈号拆分】：只重跑第 2 步（按 parts_info.json 的圈号把部品行按位置拆分）。</summary>
-        private async void BtnCmdStep2_Click(object sender, EventArgs e)
+        /// <summary>子按钮【3 圈号拆分】：只跑 第 3 步 · 圈号拆分（<c>S3</c>，写库）。</summary>
+        private async void BtnCmdStep3_Click(object sender, EventArgs e)
         {
             await RunCmdAnalysisAsync(CmdAnalysisStepKind.CalloutSplit);
         }
 
-        /// <summary>子按钮【第 3 步 · 要領図部品追加】：只重跑第 3 步（挂各要領図的 02_要領図_部品機能情報.csv）。</summary>
-        private async void BtnCmdStep3_Click(object sender, EventArgs e)
+        /// <summary>子按钮【4 要領図追加】：只跑 第 4 步 · 要領図部品追加（<c>S4</c>，写库）。</summary>
+        private async void BtnCmdStep4_Click(object sender, EventArgs e)
         {
             await RunCmdAnalysisAsync(CmdAnalysisStepKind.YoryoAppend);
         }
 
         /// <summary>
-        /// 子按钮【第 4 步 · tz.json 部品追加】：只重跑第 4 步
-        /// （classify\tz.json 里品種命中アッセンブリ図 分类依据的明细挂到该図番上）。
-        /// </summary>
-        private async void BtnCmdStep4_Click(object sender, EventArgs e)
-        {
-            await RunCmdAnalysisAsync(CmdAnalysisStepKind.TzAppend);
-        }
-
-        /// <summary>
-        /// 子按钮【第 5 步 · 部品コード正規化】：只重跑第 5 步
-        /// （按 部品マスタ\Tbl_部品マスタ.csv 的「色」把部品コード 换成 □，连续符号压成一个 □，
-        /// 撞键的行跳过 = 重複チェック）。
+        /// 子按钮【5 特注登录】：只跑 第 5 步 · 特注品部品登录（<c>S5</c>，写库）——
+        /// 读 <c>classify\特注品.json</c>（没有时退回 特注品.csv），把「品種」命中分类依据的
+        /// 明细追加到装配图名下（特注 = 1）。
         /// </summary>
         private async void BtnCmdStep5_Click(object sender, EventArgs e)
+        {
+            await RunCmdAnalysisAsync(CmdAnalysisStepKind.TzParts);
+        }
+
+        /// <summary>子按钮【6 部品コード】：只跑 第 6 步 · 部品コード正規化（<c>S6</c>，写库）。</summary>
+        private async void BtnCmdStep7_Click(object sender, EventArgs e)
         {
             await RunCmdAnalysisAsync(CmdAnalysisStepKind.PartCode);
         }
 
-        /// <summary>
-        /// 子按钮【第 6 步 · 使い分け自動設定】：只重跑第 6 步
-        /// （同一図番内 7 个字段全同的多行 → 按正規化後の部品コード 查 hiroidashiData 的 xlsx → 填「使い分け」）。
-        /// **要在第 5 步之后跑**，部品コード 才是 MEA□429 这种和拾い出し表一致的写法。
-        /// </summary>
-        private async void BtnCmdStep6_Click(object sender, EventArgs e)
+        /// <summary>子按钮【7 使い分け】：只跑 第 7 步 · 使い分け自動設定（<c>S7</c>，写库）。</summary>
+        private async void BtnCmdStep8_Click(object sender, EventArgs e)
         {
             await RunCmdAnalysisAsync(CmdAnalysisStepKind.UsageKind);
         }
 
         /// <summary>
-        /// 【CMD 分析】主按钮（<see cref="CmdAnalysisStepKind.All"/>）与六个子按钮共用的执行流程：
+        /// 子按钮【0 前置校验】：逐项检查「能不能跑 CMD 分析」，<b>只读不写</b>
+        /// （不建表 / 不写库 / 不生成文件）。检查项：PDF 文件夹 → 分类结果（有没有「アッセンブリ図」）→
+        /// 分解输出目录 → <c>classify\PdfInfoList.txt</c> → 部品基本信息数据库；最后提示 xlsx 数量。
+        /// </summary>
+        private void RunCmdPreflight()
+        {
+            if (_isRunning)
+            {
+                return;
+            }
+
+            // 只读检查：不进「分析中」文案，但仍置灰按钮防止重复点击
+            SetRunning(true, false);
+            tabMain.SelectedTab = tabPageLog;
+            lblProgress.Text = "前置校验中...";
+            AppendLog("==================================================", Color.FromArgb(90, 90, 90));
+            AppendLog(CmdAnalysisSteps.PreflightStep.LogHeader + " 开始（只检查，不写数据库）",
+                Color.FromArgb(120, 200, 255));
+            AppendLog(CmdAnalysisSteps.DescribeRun(CmdAnalysisStepKind.Preflight),
+                Color.FromArgb(120, 200, 255));
+
+            int passed = 0;
+            int failed = 0;
+
+            // ① PDF 文件夹
+            string folder = txtFolder.Text == null ? string.Empty : txtFolder.Text.Trim();
+            bool folderOk = folder.Length > 0 && Directory.Exists(folder);
+
+            ReportPreflightItem(ref passed, ref failed, "PDF 文件夹",
+                folderOk ? folder : (folder.Length == 0 ? "尚未选择" : "不存在：" + folder), folderOk);
+
+            // ② 分类结果（有没有アッセンブリ図）
+            int total = _classifications == null ? 0 : _classifications.Count;
+            int assemblyCount = total == 0 ? 0 : PdfClassifier.Count(_classifications, PdfCategory.Assembly);
+
+            ReportPreflightItem(ref passed, ref failed, "分类结果",
+                total == 0 ? "尚未执行【开始分解】"
+                    : string.Format("共 {0} 个 PDF，其中「{1}」{2} 个", total, PdfCategoryNames.Assembly,
+                        assemblyCount),
+                total > 0 && assemblyCount > 0);
+
+            // ③ 分解输出目录
+            string outputDir = _lastOutputDir;
+            bool outputOk = !string.IsNullOrEmpty(outputDir) && Directory.Exists(outputDir);
+
+            ReportPreflightItem(ref passed, ref failed, "分解输出目录",
+                outputOk
+                    ? outputDir
+                    : (string.IsNullOrEmpty(outputDir) ? "尚未执行【开始分解】" : "不存在：" + outputDir),
+                outputOk);
+
+            // ④ 分类清单 classify\PdfInfoList.txt
+            string infoListPath = outputOk ? PdfClassifier.GetInfoListPath(outputDir) : null;
+            bool infoListOk = !string.IsNullOrEmpty(infoListPath) && File.Exists(infoListPath);
+
+            ReportPreflightItem(ref passed, ref failed, "分类清单 PdfInfoList.txt",
+                infoListOk
+                    ? infoListPath
+                    : (string.IsNullOrEmpty(infoListPath) ? "找不到分解输出目录" : "不存在：" + infoListPath),
+                infoListOk);
+
+            // ⑤ 部品基本信息数据库（第一次执行 CMD 分析时自动创建）
+            string databasePath = PartBasicInfoRepository.ResolveDatabasePath();
+            bool databaseOk = !string.IsNullOrEmpty(databasePath) && File.Exists(databasePath);
+
+            ReportPreflightItem(ref passed, ref failed, "部品基本信息数据库",
+                databaseOk ? databasePath : "尚未创建（第一次执行【CMD 分析】时自动建立）：" + databasePath,
+                databaseOk);
+
+            // ⑥ 提示（不计入通过 / 失败）：特注品 CSV 的来源是 PDF 文件夹下的 xlsx
+            if (folderOk)
+            {
+                try
+                {
+                    AppendLog("[提示] PDF 文件夹下 xlsx：" + Directory.GetFiles(folder, "*.xlsx").Length +
+                        " 个（按钮 1「1 特注品JSON」只挑文件名第 5 位是 Z 的生成 特注品.csv / 特注品.json，" +
+                        "按钮 5「5 特注登录」再把命中的明细写库）",
+                        Color.FromArgb(180, 180, 180));
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("[提示] 统计 xlsx 失败：" + ex.Message, Color.FromArgb(255, 200, 120));
+                }
+            }
+
+            SetRunning(false);
+            AppendLog("--------------------------------------------------", Color.FromArgb(90, 90, 90));
+
+            ReportCmdPreflightResult(passed, failed);
+        }
+
+        /// <summary>
+        /// 输出一条前置校验结果（<c>[OK]</c> / <c>[NG]</c> + 名称 + 详情），并累加通过 / 失败计数。
+        /// </summary>
+        /// <param name="passed">通过项数（累加）。</param>
+        /// <param name="failed">失败项数（累加）。</param>
+        /// <param name="name">检查项名称。</param>
+        /// <param name="detail">检查详情（路径 / 原因）。</param>
+        /// <param name="ok">是否通过。</param>
+        private void ReportPreflightItem(ref int passed, ref int failed, string name, string detail, bool ok)
+        {
+            if (ok)
+            {
+                passed++;
+            }
+            else
+            {
+                failed++;
+            }
+
+            AppendLog(string.Format("[{0}] {1}：{2}", ok ? "OK" : "NG", name, detail),
+                ok ? Color.FromArgb(150, 220, 150) : Color.FromArgb(255, 140, 140));
+        }
+
+        /// <summary>
+        /// 前置校验的结论：全部通过 → 状态栏绿 + 提示可以执行；有 NG → 状态栏红 + 提示先补齐条件。
+        /// 两种情况都只读，不写数据库。
+        /// </summary>
+        private void ReportCmdPreflightResult(int passed, int failed)
+        {
+            if (failed == 0)
+            {
+                AppendLog(string.Format(
+                    "前置校验通过：{0} 项全部 OK。可以点【CMD 分析】一次跑完，或点下面某个单步按钮。", passed),
+                    Color.FromArgb(150, 220, 150));
+                SetStatus("前置校验通过（" + passed + " 项）", Color.FromArgb(46, 125, 50));
+                lblProgress.Text = "前置校验通过";
+                progressBar.Style = ProgressBarStyle.Continuous;
+                progressBar.Value = progressBar.Maximum;
+
+                MessageBox.Show(this,
+                    "前置校验通过（" + passed + " 项）。\n\n" +
+                    "可以点击【CMD 分析】一次跑完「第 1~7 步」，\n" +
+                    "也可以点击下面某个子按钮只跑一步。",
+                    "前置校验", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                return;
+            }
+
+            AppendLog(string.Format("前置校验未通过：{0} 项 OK / {1} 项 NG（详见上方 [NG] 行）。", passed, failed),
+                Color.FromArgb(255, 140, 140));
+            SetStatus("前置校验未通过（" + failed + " 项）", Color.FromArgb(198, 40, 40));
+            lblProgress.Text = "前置校验未通过";
+            progressBar.Style = ProgressBarStyle.Continuous;
+            progressBar.Value = 0;
+
+            MessageBox.Show(this,
+                "前置校验未通过（" + passed + " 项 OK / " + failed + " 项 NG）。\n\n" +
+                "请按日志里的 [NG] 行补齐条件（一般是先执行【开始分解】），再重试。",
+                "前置校验", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// 【CMD 分析】主按钮（<see cref="CmdAnalysisStepKind.All"/>）的执行流程：
         /// 校验分类 / 输出目录 → 做快照 → 后台执行 <see cref="CmdPartAnalysisService"/> 的分析 → 汇总显示。
-        /// 单步执行时只跑该步，日志里仍用「【第 N 步 · 名字】」前缀。
+        /// 日志里每一步仍用「【第 N 步 · 名字】」前缀；界面是「1 个主按钮（跑完全部）+ 8 个子按钮（0 前置校验 + 各跑一步）」，
+        /// 子按钮说明见 <c>docs\cmd-steps\</c>。
+        /// <para>
+        /// 第 1 步 特注品.json 作成 只读 PDF 文件夹下的 xlsx，不依赖【分类结果】里的 アッセンブリ図，
+        /// 所以这一步允许在没有装配图的情况下单独执行（写库的步骤仍然要求先有装配图的行）。
+        /// </para>
         /// </summary>
         /// <param name="stepKind">要执行的步骤。</param>
         private async Task RunCmdAnalysisAsync(CmdAnalysisStepKind stepKind)
@@ -1126,7 +1440,17 @@ namespace MSIFAITOOLS
                 return;
             }
 
-            if (_classifications == null || _classifications.Count == 0)
+            // 前置校验不是分析步骤（只检查、不写库），走单独的同步流程
+            if (stepKind == CmdAnalysisStepKind.Preflight)
+            {
+                RunCmdPreflight();
+                return;
+            }
+
+            // 第 1 步 特注品.json 作成 只读 PDF 文件夹下的 xlsx，不依赖【分类结果】
+            // （没有分类也要能生成 特注品.csv / 特注品.json）
+            if (stepKind != CmdAnalysisStepKind.SpecialProductJson &&
+                (_classifications == null || _classifications.Count == 0))
             {
                 MessageBox.Show(this, "请先点击【开始分解】，并在【分类结果】页确认分类后再执行 CMD 分析。",
                     "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1157,10 +1481,10 @@ namespace MSIFAITOOLS
                 }
             }
 
-            // 「最前面 · 特注品 CSV 生成」只遍历 PDF 文件夹下的 xlsx，不依赖アッセンブリ図：
-            // 主按钮 / 该步骤在没有装配图时也继续（服务层会打「无需分析」后返回，CSV 照常生成）
+            // 除第 1 步（特注品.json 作成：只读 xlsx，不需要装配图行）外，
+            // 其它步骤都以「アッセンブリ図」为加工对象：没有装配图就没有可追加的行，直接提示
             if (snapshot.Count == 0 && stepKind != CmdAnalysisStepKind.All &&
-                stepKind != CmdAnalysisStepKind.SpecialProductCsv)
+                stepKind != CmdAnalysisStepKind.SpecialProductJson)
             {
                 MessageBox.Show(this,
                     "【分类结果】中没有「" + PdfCategoryNames.Assembly + "」的 PDF。\n\n" +
@@ -1173,7 +1497,7 @@ namespace MSIFAITOOLS
             progressBar.Style = ProgressBarStyle.Continuous;
             progressBar.Value = 0;
 
-            // 主按钮 / 子按钮共用：日志与状态栏都用同一步骤名（名字来自 CmdAnalysisSteps）
+            // 日志与状态栏都用本次执行的步骤名（名字来自 CmdAnalysisSteps）
             CmdAnalysisStep step = CmdAnalysisSteps.GetStep(stepKind);
             string actionName = step == null ? "CMD 分析" : step.Label;
 
@@ -1181,15 +1505,29 @@ namespace MSIFAITOOLS
             tabMain.SelectedTab = tabPageLog;
 
             AppendLog("==================================================", Color.FromArgb(90, 90, 90));
-            AppendLog(string.Format("{0} 开始：{1} 个「{2}」PDF（不调用 AI：{3} + 要領図の部品情報）",
-                actionName, snapshot.Count, PdfCategoryNames.Assembly, CmdPartAnalyzer.LtStep1FileName),
-                Color.FromArgb(120, 200, 255));
+
+            // 第 1 步不碰装配图（只读 xlsx 生成 特注品.csv / 特注品.json），日志里不写 PDF 个数
+            if (stepKind == CmdAnalysisStepKind.SpecialProductJson)
+            {
+                AppendLog(actionName + " 开始：扫描 PDF 文件夹下的特注品部品表 xlsx（不写数据库）",
+                    Color.FromArgb(120, 200, 255));
+            }
+            else
+            {
+                AppendLog(string.Format("{0} 开始：{1} 个「{2}」PDF（不调用 AI：{3} + 要領図の部品情報）",
+                    actionName, snapshot.Count, PdfCategoryNames.Assembly, CmdPartAnalyzer.LtStep1FileName),
+                    Color.FromArgb(120, 200, 255));
+            }
+
             AppendLog(CmdAnalysisSteps.DescribeRun(stepKind), Color.FromArgb(120, 200, 255));
             AppendLog("分解输出目录：" + outputDir, Color.FromArgb(180, 180, 180));
             AppendLog("部品基本信息数据库：" + PartBasicInfoRepository.ResolveDatabasePath(),
                 Color.FromArgb(180, 180, 180));
 
-            SetStatus("正在 " + actionName + "（共 " + snapshot.Count + " 个 PDF）...", Color.FromArgb(230, 126, 34));
+            SetStatus(stepKind == CmdAnalysisStepKind.SpecialProductJson
+                    ? "正在 " + actionName + "..."
+                    : "正在 " + actionName + "（共 " + snapshot.Count + " 个 PDF）...",
+                Color.FromArgb(230, 126, 34));
             lblProgress.Text = actionName + " 中...";
 
             PartAnalysisSummary summary = null;

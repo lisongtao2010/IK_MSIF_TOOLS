@@ -1,0 +1,21 @@
+{
+  "source": "D:\\Github_lis2010\\rabowork\\202609_MSIF_TOOLS\\図面-20260918T025344Z-1-001\\アセンブリ図\\H525\\H325U10013_枠 上レール取付ロットNO.ラベル貼付要領図（D部）.PDF",
+  "page": 1,
+  "dpi": 300,
+  "image": { "w": 3508, "h": 2479 },
+  "table_start_x": 2364,
+  "word_count": 76,
+  "outside_word_count": 2,
+  "table_word_count": 0,
+  "other_word_count": 2,
+  "tables": [
+  ],
+  "other_words": [
+    { "text": "《D部詳細（上レール取付け/ロットNo.ラベル貼付要領図》",
+      "pixel": { "x": 141, "y": 68, "w": 1057, "h": 52 },
+      "pdf_mm": { "x": 11.94, "y": 5.76, "w": 89.49, "h": 4.40 } },
+    { "text": "引違戸2枚建",
+      "pixel": { "x": 1786, "y": 126, "w": 196, "h": 41 },
+      "pdf_mm": { "x": 151.21, "y": 10.67, "w": 16.59, "h": 3.47 } }
+  ]
+}

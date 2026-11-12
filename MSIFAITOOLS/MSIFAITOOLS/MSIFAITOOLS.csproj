@@ -167,7 +167,7 @@
   <ItemGroup>
     <!-- 合并后本工程自己的渲染实现（PdfiumViewer），API 与原 Docnet.Core 版一致 -->
     <Compile Include="CadPartSplitter\PdfRenderer.cs" />
-    <Compile Include="..\CadPartSplitter\*.cs" Exclude="..\CadPartSplitter\Program.cs;..\CadPartSplitter\CommandLineRunner.cs;..\CadPartSplitter\MainForm.cs;..\CadPartSplitter\MainForm.Designer.cs;..\CadPartSplitter\PdfInfoEditorForm.cs;..\CadPartSplitter\PdfInfoEditorForm.Designer.cs;..\CadPartSplitter\PdfRenderer.cs;..\CadPartSplitter\DetectorOptions.cs">
+    <Compile Include="..\CadPartSplitter\*.cs" Exclude="..\CadPartSplitter\Program.cs;..\CadPartSplitter\CommandLineRunner.cs;..\CadPartSplitter\MainForm.cs;..\CadPartSplitter\MainForm.Designer.cs;..\CadPartSplitter\PdfInfoEditorForm.cs;..\CadPartSplitter\PdfInfoEditorForm.Designer.cs;..\CadPartSplitter\PdfRenderer.cs;..\CadPartSplitter\DetectorOptions.cs;..\CadPartSplitter\TzSourceTextReader.cs;..\CadPartSplitter\TzFileAiPromptStore.cs;..\CadPartSplitter\TzFileAiExtractor.cs">
       <Link>CadPartSplitter\%(Filename)%(Extension)</Link>
     </Compile>
     <!--
@@ -183,12 +183,31 @@
       以后在主工程里新增其他 .cs 仍由通配符自动带入，本行不必改动。
     -->
     <Compile Include="..\CadPartSplitter\DetectorOptions.cs" Link="CadPartSplitter\DetectorOptions.cs" />
+    <!--
+      三个「非 Excel 特注品文件」相关源码也显式列出（上面的通配符里已 Exclude，不会重复编译）。
+      原因同 DetectorOptions.cs：`..\CadPartSplitter\*.cs` 的展开是「上次加载项目时」的快照，
+      用编辑器 / 脚本新建的 .cs 有时不会立刻进入 item 列表，表现就是：
+        CS0246 型または名前空間の名前 'TzFileAiExtractor' が見つかりませんでした
+        CS0103 現在のコンテキストに 'TzSourceTextReader' という名前は存在しません
+      显式列出后不再受通配符展开结果影响（以后再新增别的 .cs 仍由通配符带入）。
+    -->
+    <Compile Include="..\CadPartSplitter\TzSourceTextReader.cs" Link="CadPartSplitter\TzSourceTextReader.cs" />
+    <Compile Include="..\CadPartSplitter\TzFileAiPromptStore.cs" Link="CadPartSplitter\TzFileAiPromptStore.cs" />
+    <Compile Include="..\CadPartSplitter\TzFileAiExtractor.cs" Link="CadPartSplitter\TzFileAiExtractor.cs" />
     <!-- Excel 部品表 AI 判定的提示语：编译进 exe 作兜底，同时复制到输出目录（可运行时修改、不用重新编译） -->
     <EmbeddedResource Include="..\CadPartSplitter\Prompts\TzJsonAi.Prompt.txt">
       <LogicalName>CadPartSplitter.Prompts.TzJsonAi.Prompt.txt</LogicalName>
     </EmbeddedResource>
     <None Include="..\CadPartSplitter\Prompts\TzJsonAi.Prompt.txt">
       <Link>Prompts\TzJsonAi.Prompt.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- 非 Excel 特注品文件 AI 判定的提示语：同上，内嵌兜底 + 复制到输出目录可运行时修改 -->
+    <EmbeddedResource Include="..\CadPartSplitter\Prompts\TzJsonFileAi.Prompt.txt">
+      <LogicalName>CadPartSplitter.Prompts.TzJsonFileAi.Prompt.txt</LogicalName>
+    </EmbeddedResource>
+    <None Include="..\CadPartSplitter\Prompts\TzJsonFileAi.Prompt.txt">
+      <Link>Prompts\TzJsonFileAi.Prompt.txt</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

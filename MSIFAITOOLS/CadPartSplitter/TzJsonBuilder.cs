@@ -14,13 +14,16 @@ namespace CadPartSplitter
     /// </summary>
     public sealed class TzEntry
     {
-        /// <summary>来源 Excel 的文件名（带扩展名，例如 <c>H310Z10004.XLS</c>）。</summary>
+        /// <summary>来源文件的文件名（带扩展名，例如 <c>H310Z10004.XLS</c>）。</summary>
         public string File { get; set; }
 
-        /// <summary>図番号：Excel 文件名去扩展名（例如 <c>H310Z10004</c>）。</summary>
+        /// <summary>図番号：文件名去扩展名（例如 <c>H310Z10004</c>）。</summary>
         public string DrawingNumber { get; set; }
 
-        /// <summary>这条明细所在的表名（正常就是 <c>カメラ</c>）。</summary>
+        /// <summary>
+        /// 这条明细所在的表名（正常就是 <c>カメラ</c>）；
+        /// 非 Excel 文件没有工作表的概念，写 <c>(ファイル)</c>。
+        /// </summary>
         public string Sheet { get; set; }
 
         /// <summary>这条明细在 Excel 里的行号（1 起，指整张表的行序，不是明细序号）。</summary>
@@ -50,18 +53,28 @@ namespace CadPartSplitter
     }
 
     /// <summary>
-    /// Excel 部品表 → <c>classify\tz.json</c>：流水线的最后一步
+    /// 特注品部品表 → <c>classify\特注品.json</c>：流水线的最后一步
     /// （在分割、<c>tables\*.csv</c>、<c>01_…</c> / <c>02_…</c> 两张成品清单之后）。
     ///
-    /// 做两件事：
+    /// <para>
+    /// <b>扫什么</b>：「图纸文件夹」里<b>文件名（去扩展名）第 <see cref="SpecialProductMarkPosition"/> 个字符
+    /// 是 <c>Z</c></b> 的文件，<b>扩展名不限</b>（<see cref="IsSpecialProductDrawingNo"/>，与 MSIFAITOOLS 的
+    /// 特注品判定同一口径；<c>~$</c> 临时文件与 <c>AiAppData</c> 里的产物跳过）。
+    /// </para>
+    ///
+    /// <para>
+    /// <b>怎么读</b>（按扩展名分两条路，取出的都是这五列
+    /// <c>品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法</c>，汇总成一份
+    /// <c>&lt;输出根目录&gt;\classify\特注品.json</c>，与 <c>PdfInfoList.txt</c> 同目录、整批共用一份）：
     /// <list type="number">
-    ///   <item>扫「图纸文件夹」里的所有 Excel（<c>.xls</c> / <c>.xlsx</c> / <c>.xlsm</c>，
-    ///         <c>~$</c> 临时文件与 <c>AiAppData</c> 里的产物跳过）；</item>
-    ///   <item>每个工作簿读「カメラ」sheet 的部品表，取出这五列
-    ///         <c>品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法</c>，
-    ///         汇总成一份 <c>&lt;输出根目录&gt;\classify\tz.json</c>
-    ///         （与 <c>PdfInfoList.txt</c> 同目录，整批共用一份）。</item>
+    ///   <item><b>Excel</b>（<c>.xls</c> / <c>.xlsx</c> / <c>.xlsm</c>）：读「カメラ」sheet，走下面两套规则
+    ///         （5 列标题 / 分块版式）；规则看不懂时再由 AI 判（<see cref="TzAiExtractor"/>，默认每张表复核补齐），
+    ///         AI 的每个字段都回原表逐格核对；</item>
+    ///   <item><b>不是 Excel</b>（PDF 文字层 / <c>.csv</c> / <c>.txt</c> 之类）：没有行列结构、没有规则可走，
+    ///         把内容摊成正文交给 AI 判（<see cref="TzSourceTextReader"/> + <see cref="TzFileAiExtractor"/>），
+    ///         每个字段回正文核对（正文里找不到就丢掉）；图片 / 没有文字层的 PDF 直接跳过并记日志。</item>
     /// </list>
+    /// </para>
     ///
     /// 表头认法（与 <see cref="LtStep2Builder"/> 一样按「列名」认，不按列号）：
     ///   · 往下逐行扫（不设深度上限，表头上方的表题 / 変更履歴 / 図面情報都能跳过），
@@ -84,7 +97,7 @@ namespace CadPartSplitter
     ///
     /// 输出：UTF-8 不带 BOM 的 JSON（与 <c>parts_info.json</c> 同一约定），
     /// 字段内的换行按项目统一规则压成 <c>~</c>（同 <see cref="CsvFile.SingleLine"/>）。
-    /// 扫不到 Excel、或一张表都没凑齐那 5 列时不写文件，也不删旧文件 ——
+    /// 扫不到特注品文件、或一条明细都没收到时不写文件，也不删旧文件 ——
     /// 它是整批共用的一份，单张重跑不该把它清掉，只记日志。
     /// 一个工作簿一条明细都没收到时，把读到的工作表原样导成 CSV 放到
     /// <c>&lt;classify&gt;\tz_debug\</c>（<c>文件名__表名.csv</c>）：表头到底写在第几行、
@@ -92,8 +105,12 @@ namespace CadPartSplitter
     /// </summary>
     public static class TzJsonBuilder
     {
-        /// <summary>输出文件名（放在 <c>classify</c> 目录下，与 <c>PdfInfoList.txt</c> 同级）。</summary>
-        public const string OutputFileName = "tz.json";
+        /// <summary>
+        /// 输出文件名（放在 <c>classify</c> 目录下，与 <c>PdfInfoList.txt</c> 同级）。
+        /// 2026-11 起由 <c>tz.json</c> 改名为 <c>特注品.json</c>（内容就是特注品部品表）；
+        /// 下游 MSIFAITOOLS 读新名，读不到时仍会退回旧名 <c>tz.json</c>，所以升级顺序无所谓。
+        /// </summary>
+        public const string OutputFileName = "特注品.json";
 
         /// <summary>
         /// 优先读的表名：<c>H310Z10004.XLS</c> 那种部品表放在「カメラ」表里，
@@ -163,71 +180,116 @@ namespace CadPartSplitter
         private static readonly string[] ExcelExtensions = { ".xls", ".xlsx", ".xlsm" };
 
         /// <summary>老 <c>.xls</c> 没写代码页时的兜底代码页：932 = 日文 Shift-JIS。</summary>
-        private const int FallbackCodePage = 932;
+        internal const int FallbackCodePage = 932;
+
+        /// <summary>
+        /// 特注品図番的标记位置（1 起）：文件名（去扩展名）的<b>第 5 个字符</b>是
+        /// <see cref="SpecialProductMark"/> 的文件才是特注品。
+        /// 与 MSIFAITOOLS 的 <c>CmdSpecialProductRule.DrawingNoPosition</c> 同一个口径。
+        /// </summary>
+        public const int SpecialProductMarkPosition = 5;
+
+        /// <summary>
+        /// 特注品図番的标记字符：<c>Z</c>。判定时 <c>Z</c> / <c>z</c> / 全角 <c>Ｚ</c> 都认
+        /// （见 <see cref="IsSpecialProductDrawingNo"/>）。
+        /// </summary>
+        public const char SpecialProductMark = 'Z';
+
+        /// <summary>
+        /// 文件名（去扩展名）是否像特注品図番：第 <see cref="SpecialProductMarkPosition"/> 个字符是
+        /// <c>Z</c>（半角大写 / 半角小写 / 全角都认；不足 5 个字符不算）。
+        /// 例：<c>H310Z10004</c> ✓、<c>H310U10029</c> ✗。
+        /// </summary>
+        public static bool IsSpecialProductDrawingNo(string drawingNumber)
+        {
+            if (string.IsNullOrEmpty(drawingNumber) || drawingNumber.Length < SpecialProductMarkPosition)
+                return false;
+
+            char mark = drawingNumber[SpecialProductMarkPosition - 1];
+
+            return mark == 'Z' || mark == 'z' || mark == 'Ｚ' || mark == 'ｚ';
+        }
 
         // ── 生成 ──────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 扫 <paramref name="excelFolder"/> 下的 Excel 部品表，汇总写出
-        /// <c>&lt;classifyDirectory&gt;\tz.json</c>。
+        /// 扫 <paramref name="excelFolder"/> 下「文件名第 <see cref="SpecialProductMarkPosition"/> 位是
+        /// <c>Z</c>」的特注品文件（<b>扩展名不限</b>：Excel 走规则 + AI 复核，其它文件走 AI 直读），
+        /// 汇总写出 <c>&lt;classifyDirectory&gt;\特注品.json</c>。
         /// </summary>
         /// <param name="excelFolder">要扫的文件夹（图纸所在文件夹）。不存在时什么都不做。</param>
-        /// <param name="classifyDirectory"><c>classify</c> 目录（tz.json 写在这里）；留空时跳过。</param>
+        /// <param name="classifyDirectory"><c>classify</c> 目录（特注品.json 写在这里）；留空时跳过。</param>
         /// <param name="recursive">是否连子文件夹一起扫（与批量模式的 <c>--recursive</c> 保持一致）。</param>
         /// <param name="opts">参数 / 日志（可为 null）。</param>
-        /// <returns>写出的 tz.json 全路径；未生成时返回 null。</returns>
+        /// <returns>写出的 特注品.json 全路径；未生成时返回 null。</returns>
         public static string Build(string excelFolder, string classifyDirectory, bool recursive, DetectorOptions opts)
         {
             DetectorOptions o = opts ?? new DetectorOptions();
 
             if (!o.BuildTzJson)
             {
-                o.Log("[INFO] tz.json（Excel 部品表）已关闭（BuildTzJson = false）。");
+                o.Log("[INFO] 特注品.json（Excel 部品表）已关闭（BuildTzJson = false）。");
                 return null;
             }
 
             if (string.IsNullOrWhiteSpace(excelFolder) || !Directory.Exists(excelFolder))
             {
-                o.Log("[INFO] tz.json：扫描文件夹不存在（" + (excelFolder ?? "空") + "），跳过。");
+                o.Log("[INFO] 特注品.json：扫描文件夹不存在（" + (excelFolder ?? "空") + "），跳过。");
                 return null;
             }
 
             if (string.IsNullOrWhiteSpace(classifyDirectory))
             {
-                o.Log("[INFO] tz.json：分类目录为空，跳过。");
+                o.Log("[INFO] 特注品.json：分类目录为空，跳过。");
                 return null;
             }
 
-            List<string> files = FindExcelFiles(excelFolder, recursive);
+            List<string> files = FindSpecialProductFiles(excelFolder, recursive);
 
             if (files.Count == 0)
             {
-                o.Log("[INFO] tz.json：文件夹里没有 Excel（.xls / .xlsx / .xlsm），不生成 "
+                o.Log("[INFO] 特注品.json：文件夹里没有「文件名第 " + SpecialProductMarkPosition
+                      + " 个字符是 " + SpecialProductMark + "」的特注品文件，不生成 "
                       + OutputFileName + "（旧文件保持不动）。");
                 return null;
             }
 
-            o.Log("[INFO] tz.json：扫到 " + files.Count + " 个 Excel（" + Path.GetFullPath(excelFolder)
-                  + (recursive ? "，含子文件夹" : "，仅当前文件夹") + "），读 "
+            int excelFileCount = 0;
+
+            foreach (string file in files)
+            {
+                if (IsExcelWorkbook(file))
+                    excelFileCount++;
+            }
+
+            o.Log("[INFO] 特注品.json：扫到 " + files.Count + " 个特注品文件（第 "
+                  + SpecialProductMarkPosition + " 位 = " + SpecialProductMark + "：Excel "
+                  + excelFileCount + " 个、其它 " + (files.Count - excelFileCount) + " 个；"
+                  + Path.GetFullPath(excelFolder)
+                  + (recursive ? "，含子文件夹" : "，仅当前文件夹") + "），取 "
                   + string.Join(" / ", ColumnNames) + " 五列。");
 
-            // AI 判定与补足（默认关闭，--tz-ai 打开）：
-            // 没配密钥 / 接口不可用只记日志、不打断 tz.json —— AI 是补足，不是前置条件。
+            // AI 判定与补足（默认打开 = TzAiMode.Always；--no-tz-ai / MSIF_TZ_AI=off 关闭）：
+            // 没配密钥 / 接口不可用只记日志、不打断 特注品.json —— AI 是补足，不是前置条件。
             TzAiExtractor ai = null;
+            TzFileAiExtractor fileAi = null;
 
             if (o.TzAiMode != TzAiMode.Off)
             {
                 try
                 {
                     ai = TzAiExtractor.Create(o);
+                    fileAi = new TzFileAiExtractor(ai.Client, o.TzAiMaxSourceChars, o.Log);
 
-                    o.Log("[INFO] tz.json：AI 判定已启用（"
+                    o.Log("[INFO] 特注品.json：AI 判定已启用（Excel："
                           + (ai.Mode == TzAiMode.Always ? "每张表复核补齐" : "规则一条都没收到时兜底")
-                          + "，模型 " + ai.Options.Model + "，配置来源 " + ai.Options.ConfigurationSource + "）。");
+                          + "；非 Excel 特注品文件：整篇正文判一次；模型 " + ai.Options.Model
+                          + "，配置来源 " + ai.Options.ConfigurationSource + "）。");
                 }
                 catch (Exception ex)
                 {
-                    o.Log("[WARN] tz.json：AI 判定已跳过（" + ex.Message + "）。");
+                    o.Log("[WARN] 特注品.json：AI 判定已跳过（" + ex.Message
+                          + "）；第 5 位是 Z 的非 Excel 文件这次没有 AI 可判，会被跳过。");
                 }
             }
 
@@ -243,40 +305,51 @@ namespace CadPartSplitter
             foreach (string file in files)
             {
                 List<TzEntry> rows;
+                bool isExcel = IsExcelWorkbook(file);
 
                 try
                 {
-                    rows = ReadWorkbook(file, o, dumpDirectory, ai, aiStats);
+                    // Excel：「カメラ」表 + 规则（5 列标题 / 分块版式）+ AI 复核
+                    // 其它（PDF 文字层 / 文本类）：摊成正文交给 AI 判（没有规则可走）
+                    rows = isExcel
+                        ? ReadWorkbook(file, o, dumpDirectory, ai, aiStats)
+                        : ReadNonExcelSource(file, o, fileAi, aiStats);
                 }
                 catch (Exception ex)
                 {
                     // 外部文件不可控（损坏 / 加了打开密码 / 被别的进程独占）：跳过这一个文件，
                     // 不打断整批（与批量处理「单张失败不影响后面的图纸」同一策略）。
-                    o.Log("[WARN] tz.json：读不动 " + Path.GetFileName(file)
+                    o.Log("[WARN] 特注品.json：读不动 " + Path.GetFileName(file)
                           + "（" + ex.GetType().Name + "：" + ex.Message + "），跳过这个文件。");
                     continue;
                 }
 
                 if (rows.Count == 0)
                 {
-                    o.Log("[INFO] tz.json：" + Path.GetFileName(file) + " 里既没找到同时含 "
-                          + string.Join(" / ", ColumnNames) + " 的表头，也不是「追加部品セット + 品種」那种分块版式，跳过"
-                          + "（该表的原样导出见 " + dumpDirectory + " 里的 CSV）。");
+                    // Excel：规则 + AI 都没收到明细 → 版式看不懂（原样导出见 dumpDirectory）
+                    // 其它文件：ReadNonExcelSource 里已经记过原因（没有文字层 / 没有 AI 可判），这里不再重复
+                    if (isExcel)
+                    {
+                        o.Log("[INFO] 特注品.json：" + Path.GetFileName(file) + " 里既没找到同时含 "
+                              + string.Join(" / ", ColumnNames) + " 的表头，也不是「追加部品セット + 品種」那种分块版式，跳过"
+                              + "（该表的原样导出见 " + dumpDirectory + " 里的 CSV）。");
+                    }
+
                     continue;
                 }
 
                 usedFiles++;
                 items.AddRange(rows);
 
-                o.Log("[INFO] tz.json：" + Path.GetFileName(file) + " → " + rows.Count + " 条明细。");
+                o.Log("[INFO] 特注品.json：" + Path.GetFileName(file) + " → " + rows.Count + " 条明细。");
             }
 
             if (aiStats.CallCount > 0)
             {
-                o.Log("[INFO] tz.json：AI 判定调用 " + aiStats.CallCount + " 次：返回 "
-                      + aiStats.ParsedItemCount + " 条，回原表核对通过 " + aiStats.AcceptedItemCount
+                o.Log("[INFO] 特注品.json：AI 判定调用 " + aiStats.CallCount + " 次：返回 "
+                      + aiStats.ParsedItemCount + " 条，回原文核对通过 " + aiStats.AcceptedItemCount
                       + " 条，丢弃 " + aiStats.RejectedItemCount + " 条（另有 " + aiStats.RejectedValueCount
-                      + " 个字段在原表里找不到，已丢掉）"
+                      + " 个字段在原文里找不到，已丢掉）"
                       + (aiStats.AiTextValueCount > 0
                           ? "；" + aiStats.AiTextValueCount + " 个字段取自长格子里的那一段"
                           : string.Empty)
@@ -285,15 +358,14 @@ namespace CadPartSplitter
 
             foreach (string note in aiStats.Notes)
             {
-                o.Log("[INFO] tz.json：AI：" + note);
+                o.Log("[INFO] 特注品.json：AI：" + note);
             }
 
             if (items.Count == 0)
             {
-                // 一条明细都没收到：不写空的 tz.json（整批共用一份，写成空的会把上一次的成果清掉）
-                o.Log("[INFO] tz.json：" + files.Count + " 个 Excel 既没凑齐 "
-                      + string.Join(" / ", ColumnNames) + " 五列、也没有分块版式，不写 " + OutputFileName
-                      + "（旧文件保持不动）；表头实际怎么写见 " + dumpDirectory
+                // 一条明细都没收到：不写空文件（整批共用一份，写成空的会把上一次的成果清掉）
+                o.Log("[INFO] 特注品.json：" + files.Count + " 个特注品文件一个部品明细都没收到，不写 "
+                      + OutputFileName + "（旧文件保持不动）；Excel 的表头实际怎么写见 " + dumpDirectory
                       + " 里导出的 CSV（没有导出说明那张表是空的）。");
                 return null;
             }
@@ -308,16 +380,17 @@ namespace CadPartSplitter
             }
             catch (IOException ex)
             {
-                o.Log("[WARN] tz.json：写文件失败（" + ex.GetType().Name + "：" + ex.Message + "）。");
+                o.Log("[WARN] 特注品.json：写文件失败（" + ex.GetType().Name + "：" + ex.Message + "）。");
                 return null;
             }
             catch (UnauthorizedAccessException ex)
             {
-                o.Log("[WARN] tz.json：无权限写 " + classifyDirectory + "（" + ex.GetType().Name + "）。");
+                o.Log("[WARN] 特注品.json：无权限写 " + classifyDirectory + "（" + ex.GetType().Name + "）。");
                 return null;
             }
 
-            o.Log("[INFO] tz.json：" + files.Count + " 个 Excel（有表头的 " + usedFiles + " 个）→ 共 "
+            o.Log("[INFO] 特注品.json：" + files.Count + " 个特注品文件（收到明细的 " + usedFiles
+                  + " 个：Excel " + excelFileCount + " / 其它 " + (files.Count - excelFileCount) + "）→ 共 "
                   + items.Count + " 条明细，已保存：" + path);
 
             return path;
@@ -391,6 +464,78 @@ namespace CadPartSplitter
             return files;
         }
 
+        /// <summary>
+        /// 列出文件夹下的<b>特注品文件</b>：文件名（去扩展名）第 <see cref="SpecialProductMarkPosition"/>
+        /// 个字符是 <c>Z</c>（<see cref="IsSpecialProductDrawingNo"/>），<b>扩展名不限</b>。
+        ///
+        /// <para>
+        /// 为什么要放宽扩展名：图纸文件夹里「第 5 位是 Z」的不一定都是 Excel ——
+        /// 也有 PDF 特注品表、CSV / TXT 之类。Excel 走规则（5 列标题 / 分块版式）+ AI 复核，
+        /// 其它文件把内容摊成文本交给 AI 判（见 <see cref="TzSourceTextReader"/> / <see cref="TzFileAiExtractor"/>）。
+        /// </para>
+        ///
+        /// 跳过 <c>~$</c> 临时文件与 <c>AiAppData</c> 里的产物；排序规则同 <see cref="FindExcelFiles"/>。
+        /// </summary>
+        public static List<string> FindSpecialProductFiles(string directory, bool recursive)
+        {
+            var files = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return files;
+
+            string[] all;
+
+            try
+            {
+                all = Directory.GetFiles(
+                    directory,
+                    "*",
+                    recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return files;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return files;
+            }
+
+            foreach (string file in all)
+            {
+                if (Path.GetFileName(file).StartsWith("~$", StringComparison.Ordinal))
+                    continue;       // Excel / Office 打开文件时留下的临时文件
+
+                if (IsUnderAiAppData(directory, file))
+                    continue;       // 输出目录里的不是图纸
+
+                if (!IsSpecialProductDrawingNo(Path.GetFileNameWithoutExtension(file)))
+                    continue;       // 第 5 位不是 Z → 不是特注品
+
+                files.Add(file);
+            }
+
+            files.Sort(StringComparer.OrdinalIgnoreCase);
+            return files;
+        }
+
+        /// <summary>
+        /// 这个文件能不能当 Excel 工作簿读（扩展名在 <see cref="ExcelExtensions"/> 里）。
+        /// 不能的走「非 Excel」那条 AI 直读通道。
+        /// </summary>
+        public static bool IsExcelWorkbook(string path)
+        {
+            string ext = Path.GetExtension(path);
+
+            for (int i = 0; i < ExcelExtensions.Length; i++)
+            {
+                if (string.Equals(ext, ExcelExtensions[i], StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
         /// <summary>该文件是否落在 <c>&lt;扫描目录&gt;\AiAppData\…</c> 里面（输出目录里的不是图纸）。</summary>
         private static bool IsUnderAiAppData(string root, string file)
         {
@@ -431,6 +576,55 @@ namespace CadPartSplitter
             }
 
             return false;
+        }
+
+        // ── 读非 Excel 的特注品文件 ────────────────────────────────────────────
+
+        /// <summary>
+        /// 读一个「文件名第 <see cref="SpecialProductMarkPosition"/> 位是 <c>Z</c> 但<b>不是 Excel</b>」
+        /// 的特注品文件：把内容摊成文本交给 AI 判明细
+        /// （<see cref="TzSourceTextReader"/> 取正文 + <see cref="TzFileAiExtractor"/> 判明细）。
+        ///
+        /// <para>
+        /// 没有 AI 可用时（没配密钥 / 用 <c>--no-tz-ai</c> 关掉）直接跳过并记日志：
+        /// 这类文件没有行列结构，没有可用的规则，硬读只会把版面文字当成明细。
+        /// </para>
+        /// </summary>
+        private static List<TzEntry> ReadNonExcelSource(string path, DetectorOptions o,
+            TzFileAiExtractor fileAi, TzAiStats aiStats)
+        {
+            var entries = new List<TzEntry>();
+            string fileName = Path.GetFileName(path);
+
+            if (fileAi == null)
+            {
+                o.Log("[INFO] 特注品.json：" + fileName + " 不是 Excel，这类文件只能靠 AI 判明细；"
+                      + "本次 AI 没启用（加 --tz-ai 打开，或检查密钥配置），跳过。");
+                return entries;
+            }
+
+            TzSourceText source = TzSourceTextReader.Read(path, o.TzAiMaxSourceChars, o.Log);
+
+            if (source == null || string.IsNullOrWhiteSpace(source.Text))
+            {
+                return entries;     // 原因（格式不支持 / 没有文字层 / 读不动）TzSourceTextReader 已记日志
+            }
+
+            if (source.Truncated)
+            {
+                o.Log("[INFO] 特注品.json：" + fileName + " 的正文超过 " + o.TzAiMaxSourceChars
+                      + " 字，后面的内容不送 AI（TzAiMaxSourceChars 可调）。");
+            }
+
+            List<TzEntry> rows = fileAi.Extract(path, source, aiStats);
+
+            if (rows.Count == 0)
+            {
+                o.Log("[INFO] 特注品.json：" + fileName + "（" + source.Kind + "）没判出部品明细。");
+            }
+
+            entries.AddRange(rows);
+            return entries;
         }
 
         // ── 读工作簿 ──────────────────────────────────────────────────────────

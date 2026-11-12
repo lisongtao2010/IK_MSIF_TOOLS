@@ -8,7 +8,7 @@ using System.Web.Script.Serialization;
 namespace MSIFAITOOLS.Services
 {
     /// <summary>
-    /// <c>classify\tz.json</c> 里的一条明细 = Excel 部品表（「カメラ」表）的一行：
+    /// <c>classify\特注品.json</c>（旧名 <c>tz.json</c>）里的一条明细 = Excel 部品表（「カメラ」表）的一行：
     /// 品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法，另带来源（file / sheet / row）。
     /// 结构与 <c>CadPartSplitter</c> 的 <c>TzJsonBuilder</c> 写出的一致（见 docs\分割原理.md 3.15）。
     /// </summary>
@@ -91,12 +91,12 @@ namespace MSIFAITOOLS.Services
     }
 
     /// <summary>
-    /// 【CMD 分析】第 4 步的追加逻辑（步骤名仍叫「tz.json 部品追加」）：明细里「品種」出现在
+    /// 【CMD 分析】第 5 步「特注品部品登录」的追加逻辑：明细里「品種」出现在
     /// アッセンブリ図 的<b>分类依据</b>中的，登记到部品基本信息表（<b>不调用 AI</b>、不写任何文件）。
     /// <para>
-    /// <b>明细从哪来</b>：优先读最前面那步生成的 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>
-    /// （<see cref="LoadCsvEntries"/>，<b>不再解析 Excel</b>）；一个 CSV 都没有时才退回读旧的
-    /// <c>classify\tz.json</c>（<see cref="LoadEntries"/>）。
+    /// <b>明细从哪来</b>：优先读第 1 步作成的 <c>classify\特注品.json</c>（旧名 <c>tz.json</c>，
+    /// <see cref="LoadEntries"/> 新名读不到时自动退回旧名）；一个 JSON 都读不到时才退回
+    /// <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>（<see cref="LoadCsvEntries"/>，<b>不解析 Excel</b>）。
     /// </para>
     ///
     /// 流程：
@@ -104,14 +104,14 @@ namespace MSIFAITOOLS.Services
     ///   <item>读 <c>&lt;输出根目录&gt;\classify\PdfInfoList.txt</c>（図番号 / 文件名 / 图面分类 / 分类依据），
     ///         取出「图面分类 = アッセンブリ図」的记录的<b>分类依据</b>（形如
     ///         <c>table_05.csv：H310 １７ラシッサ 片引戸 枠 アッセンブリ図</c>）；</item>
-    ///   <item>读明细：<c>&lt;输出根目录&gt;\&lt;文件名&gt;\特注品.csv</c>（表头 品種 / 部品名 / 枠区分 /
-    ///         部品コード / 員数 / 追加対応特注寸法）；一个 CSV 都没有时退回 <c>classify\tz.json</c>
-    ///         （顶层 <c>items</c> 数组，字段相同）；</item>
+    ///   <item>读明细：<c>&lt;输出根目录&gt;\classify\特注品.json</c>（旧名 <c>tz.json</c>）
+    ///         顶层 <c>items</c> 数组，字段 品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法；
+    ///         一个 JSON 都没有时退回 <c>&lt;输出根目录&gt;\&lt;文件名&gt;\特注品.csv</c>（表头相同）；</item>
     ///   <item>把分类依据按空白 / 标点切成单词，与 <c>品種</c> 做<b>完全一致</b>比较
     ///         （全角转半角、去空白、忽略大小写）；一个都没命中时再退回<b>包含</b>比较
     ///         —— 与第 3 步「要領図部品追加」的判定完全一致；</item>
     ///   <item>命中的条目转成 <see cref="PartBasicInfo"/>：図番 = アッセンブリ図 の図番、页码 = 1，
-    ///         部品名 / 枠区分 / 部品コード 取 tz.json 的同名列，追加対応特注寸法进备注
+    ///         部品名 / 枠区分 / 部品コード 取明细的同名列，追加対応特注寸法进备注
     ///         （<c>品種：片引戸；特注寸法：2199 ≦Ｗ</c>）、<b>特注 = <see cref="SpecialNoteMark"/></b>（<c>1</c>），
     ///         校验状态 = 未校验；</item>
     ///   <item>追加対応特注寸法由 <see cref="ApplySpecialSize"/> 解析成 H / W 范围：
@@ -125,8 +125,18 @@ namespace MSIFAITOOLS.Services
     /// </summary>
     internal sealed class CmdTzPartCollector
     {
-        /// <summary>Excel 部品表文件名（放在 <c>classify</c> 目录下，与 <c>PdfInfoList.txt</c> 同级）。</summary>
-        public const string FileName = "tz.json";
+        /// <summary>
+        /// Excel 部品表文件名（放在 <c>classify</c> 目录下，与 <c>PdfInfoList.txt</c> 同级）。
+        /// 2026-11 起由 <c>tz.json</c> 改名为 <c>特注品.json</c>（内容就是特注品部品表，
+        /// 与同一步生成的 <c>特注品.csv</c> 名字对齐）。
+        /// </summary>
+        public const string FileName = "特注品.json";
+
+        /// <summary>
+        /// 改名前的旧文件名：读 / 同步时新名不存在就退回它，
+        /// 让升级前【开始分解】生成的旧目录仍能直接用（新名一旦存在就只用新名）。
+        /// </summary>
+        public const string LegacyFileName = "tz.json";
 
         /// <summary>分类清单目录名。</summary>
         public const string ClassifyFolderName = "classify";
@@ -141,7 +151,7 @@ namespace MSIFAITOOLS.Services
         public const string RemarkSpecialSizePrefix = "特注寸法：";
 
         /// <summary>
-        /// 「特注」列的值：tz.json 的明细都是「追加対応」部品，一律标 <c>1</c>
+        /// 「特注」列的值：特注品.json 的明细都是「追加対応」部品，一律标 <c>1</c>
         /// （特注寸法原文留在备注里对照，见 <see cref="RemarkSpecialSizePrefix"/>）。
         /// 与 <see cref="PartBasicInfo.SpecialNoteMark"/> 同值（写库前按它决定是否清空数量 / 切断寸法）。
         /// </summary>
@@ -197,10 +207,33 @@ namespace MSIFAITOOLS.Services
             return Path.Combine(outputDirectory ?? string.Empty, ClassifyFolderName);
         }
 
-        /// <summary><c>&lt;输出根目录&gt;\classify\tz.json</c>。</summary>
+        /// <summary><c>&lt;输出根目录&gt;\classify\特注品.json</c>（新名字，写入用）。</summary>
         public static string GetFilePath(string outputDirectory)
         {
             return Path.Combine(GetClassifyDirectory(outputDirectory), FileName);
+        }
+
+        /// <summary>
+        /// 实际要读写的文件：新名 <c>特注品.json</c> 在就用它；不存在但旧名 <c>tz.json</c> 在就用旧的
+        /// （升级前【开始分解】生成的目录）；两个都没有时返回新名字的路径（调用方据此判「找不到」）。
+        /// <para>
+        /// 写入方（<see cref="CmdSpecialProductCsvExporter"/> 的同步）也走这里：
+        /// 这样旧目录只会被更新它自己那份 <c>tz.json</c>，不会凭空多出一个空的
+        /// <c>特注品.json</c>（仍然遵守「文件不存在就不新建」的约定）。
+        /// </para>
+        /// </summary>
+        public static string ResolveFilePath(string outputDirectory)
+        {
+            string path = GetFilePath(outputDirectory);
+
+            if (File.Exists(path))
+            {
+                return path;
+            }
+
+            string legacy = Path.Combine(GetClassifyDirectory(outputDirectory), LegacyFileName);
+
+            return File.Exists(legacy) ? legacy : path;
         }
 
         /// <summary><c>&lt;输出根目录&gt;\classify\PdfInfoList.txt</c>。</summary>
@@ -290,18 +323,19 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 读 <c>classify\tz.json</c>，返回全部明细（顺序与文件一致）。
+        /// 读 <c>classify\特注品.json</c>（改名前的旧名 <c>tz.json</c> 也认，见 <see cref="ResolveFilePath"/>），
+        /// 返回全部明细（顺序与文件一致）。
         /// 文件缺失 / 解析失败时记一条 <paramref name="notes"/> 并返回空表。
         /// 顶层结构：<c>{ "item_count": N, "items": [ { "品種": …, "部品名": … }, … ] }</c>。
         /// </summary>
         public static List<CmdTzEntry> LoadEntries(string outputDirectory, IList<string> notes)
         {
             List<CmdTzEntry> entries = new List<CmdTzEntry>();
-            string path = GetFilePath(outputDirectory);
+            string path = ResolveFilePath(outputDirectory);
 
             if (!File.Exists(path))
             {
-                AddNote(notes, string.Format("找不到 {0}（先跑【开始分解】生成 Excel 部品表）：跳过 tz.json 部品",
+                AddNote(notes, string.Format("找不到 {0}（先跑【开始分解】生成 Excel 部品表）：跳过特注品部品",
                     Path.Combine(ClassifyFolderName, FileName)));
 
                 return entries;
@@ -388,13 +422,13 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 读【CMD 分析】最前面那一步（<see cref="CmdSpecialProductCsvExporter"/>）写出的所有
+        /// 读第 1 步（<see cref="CmdSpecialProductCsvExporter"/>）写出的所有
         /// <c>特注品.csv</c>（<c>&lt;outputDirectory&gt;\&lt;文件名&gt;\特注品.csv</c>），
-        /// 转成与 <c>tz.json</c> 相同的明细列表 —— 第 4 步<b>直接用它，不再解析 Excel</b>。
+        /// 转成与 <c>classify\特注品.json</c> 相同的明细列表 —— 第 5 步只在<b>读不到 JSON 时才退回用它，不再解析 Excel</b>。
         /// <para>
         /// 列按表头名找：品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法
-        /// （表头里没有的列按空处理；「員数」第 4 步不用）。
-        /// 一个 CSV 都没有时记一条 <paramref name="notes"/>，调用方可以退回读 <c>tz.json</c>。
+        /// （表头里没有的列按空处理；「員数」第 5 步不用）。
+        /// 一个 CSV 都没有时记一条 <paramref name="notes"/>（第 5 步此时连明细都没有，直接跳过）。
         /// </para>
         /// </summary>
         /// <param name="outputDirectory"><c>&lt;PDF 文件夹&gt;\AiAppData</c>（CSV 就写在各子文件夹里）。</param>
@@ -410,8 +444,8 @@ namespace MSIFAITOOLS.Services
 
             if (paths.Count == 0)
             {
-                AddNote(notes, string.Format("找不到 {0}（先跑最前面的「{1}」）：跳过 {2} 部品",
-                    CmdSpecialProductCsvExporter.CsvFileName, CmdAnalysisSteps.SpecialProductCsvName,
+                AddNote(notes, string.Format("找不到 {0}（先跑{1}）：跳过 {2} 部品",
+                    CmdSpecialProductCsvExporter.CsvFileName, CmdAnalysisSteps.SpecialProductJsonStep.Label,
                     FileName));
 
                 return entries;

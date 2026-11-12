@@ -66,26 +66,26 @@ namespace MSIFAITOOLS.Services
     /// <para>
     /// <b>谁算特注品</b>：文件名（去扩展名）第 5 个字符是 <c>Z</c> 的 <c>.xlsx</c>
     /// （<see cref="CmdSpecialProductRule.IsSpecialProductDrawingNo"/>：半角 <c>Z</c> / 小写 <c>z</c> /
-    /// 全角 <c>Ｚ</c> 都认，长度不足 5 位不算）。判定口径与第 1 / 2 / 3 步写「特注品」完全一致。
+    /// 全角 <c>Ｚ</c> 都认，长度不足 5 位不算）。判定口径与第 2 步装配图入库、第 5 步特注品部品登录写「特注品」完全一致。
     /// </para>
     ///
     /// <para>
-    /// <b>部品从哪里来</b>：直接读该 xlsx 的部品表（工作表 <c>カメラ</c>，与 <c>classify\tz.json</c>
-    /// 的来源表一致；没有这张表时退回第一张工作表）。表头按列名找 ——
+    /// <b>部品从哪里来</b>：直接读该 xlsx 的部品表（工作表 <c>カメラ</c>，与 <c>classify\特注品.json</c>
+    /// 的来源表一致，旧名 <c>tz.json</c>；没有这张表时退回第一张工作表）。表头按列名找 ——
     /// <c>品種 / 部品名 / 枠区分 / 部品コード / 員数 / 追加対応特注寸法</c>（<see cref="CsvColumns"/>），
     /// 全角 / 半角、空格差异不影响比对（<see cref="NormalizeHeader"/>）。
     /// </para>
     ///
     /// <para>
-    /// <b>为什么也写「追加対応特注寸法」</b>：第 4 步（<see cref="CmdTzPartCollector"/>）改成
-    /// <b>直接读这里生成的 CSV</b>、不再解析 Excel，而 H / W 上下限与备注「特注寸法：…」
-    /// 全靠这一列，所以必须一并写出（前 5 列的顺序不变）。
+    /// <b>为什么也写「追加対応特注寸法」</b>：第 5 步（<see cref="CmdTzPartCollector"/>）读的就是这份明细
+    /// （优先读同步出的 <c>classify\特注品.json</c>，没有 JSON 时才退回这里生成的 CSV）、<b>不再解析 Excel</b>，
+    /// 而 H / W 上下限与备注「特注寸法：…」全靠这一列，所以必须一并写出（前 5 列的顺序不变）。
     /// </para>
     ///
     /// <para>
     /// <b>取不到值的列就空着</b>：例如部品表没有「員数」列，该列整列留空；某一行某个单元格为空同样留空，
     /// 不猜、不补 0。明细里写着「追加不要」（<see cref="CmdTzPartCollector.ContainsNoNeedMark"/>：
-    /// <c>追加不要 / 追加しない / 追加なし / 追加無し</c>）的行与第 4 步 tz.json 一样<b>不写进 CSV</b>，
+    /// <c>追加不要 / 追加しない / 追加なし / 追加無し</c>）的行与第 5 步读 特注品.json 一样<b>不写进 CSV</b>，
     /// 条数记在提示里。
     /// </para>
     ///
@@ -93,7 +93,7 @@ namespace MSIFAITOOLS.Services
     /// <b>AI 补足（可选）</b>：<see cref="Export(string, string, AiApiOptions)"/> 传入已配置的
     /// <see cref="AiApiOptions"/> 时，用 <see cref="CmdSpecialProductAiAdvisor"/> 读该図番的
     /// <c>plu_table.txt</c>，<b>先补空字段 / 缺行、再补「追加対応特注寸法」</b>（Excel 已有的值不动），
-    /// 最后把结果同步进 <c>classify\tz.json</c>（<see cref="MergeIntoTzJson"/>）。
+    /// 最后把结果同步进 <c>classify\特注品.json</c>（旧名 <c>tz.json</c>，<see cref="MergeIntoTzJson"/>）。
     /// 不传（<c>null</c>）或没配密钥时完全不联网，行为与以前一样。
     /// </para>
     ///
@@ -109,7 +109,7 @@ namespace MSIFAITOOLS.Services
         /// <summary>生成的文件名（放在 <c>AiAppData\&lt;文件名&gt;\</c> 下）。</summary>
         public const string CsvFileName = "特注品.csv";
 
-        /// <summary>Excel 部品表的工作表名（<c>tz.json</c> 的来源表也是这张）。</summary>
+        /// <summary>Excel 部品表的工作表名（<c>特注品.json</c>（旧名 <c>tz.json</c>）的来源表也是这张）。</summary>
         public const string PartSheetName = "カメラ";
 
         /// <summary>CSV 的列（顺序固定 = 表头行顺序）。</summary>
@@ -143,8 +143,8 @@ namespace MSIFAITOOLS.Services
         private static readonly string[] QuantityHeaders = new string[] { "員数", "员数", "数量", "入数" };
 
         /// <summary>
-        /// 「追加対応特注寸法」列：写进 CSV 第 6 列（第 4 步据此算 H / W 上下限与备注），
-        /// 同时用来判定「追加不要」（与第 4 步 tz.json 的判定口径一致）。
+        /// 「追加対応特注寸法」列：写进 CSV 第 6 列（第 5 步据此算 H / W 上下限与备注），
+        /// 同时用来判定「追加不要」（与第 5 步读 特注品.json 的判定口径一致）。
         /// </summary>
         private static readonly string[] SpecialSizeHeaders = new string[] { "追加対応特注寸法" };
 
@@ -164,10 +164,10 @@ namespace MSIFAITOOLS.Services
         /// 同上，并追加「AI 补足」：<paramref name="aiOptions"/> 已配置密钥时，对每个特注品文件
         /// 用 AI 读该図番的 PDF 图面文字（<c>AiAppData\&lt;図番&gt;\plu_table.txt</c>），
         /// <b>只补 Excel 读不到的内容</b>（空字段 / 缺的部品 / 追加対応特注寸法），
-        /// 然后把最终内容同步进 <c>classify\tz.json</c>。
+        /// 然后把最终内容同步进 <c>classify\特注品.json</c>（旧名 <c>tz.json</c>）。
         /// <para>
         /// <paramref name="aiOptions"/> 为 <c>null</c> 或未配置密钥时与原来完全一样：
-        /// 只写 Excel 读到的内容，不联网（结果仍会同步进 <c>classify\tz.json</c>）。
+        /// 只写 Excel 读到的内容，不联网（结果仍会同步进 <c>classify\特注品.json</c>）。
         /// </para>
         /// </summary>
         /// <param name="pdfDirectory">选择的 PDF 文件夹（&lt;outputDirectory&gt; 的上一级）。</param>
@@ -264,7 +264,7 @@ namespace MSIFAITOOLS.Services
                 result.RowCount += output.Count - 1;
                 result.WrittenFiles.Add(path);
 
-                // 特注品.csv 做出来了：把最终内容同步进 classify\tz.json（补足 tz.json 的明细 / 字段）
+                // 特注品.csv 做出来了：把最终内容同步进 classify\特注品.json（补足 JSON 的明细 / 字段）
                 MergeIntoTzJson(outputDirectory, fileName, output, result);
 
                 if (output.Count <= 1)
@@ -273,7 +273,7 @@ namespace MSIFAITOOLS.Services
                 }
             }
 
-            // 第 4 步是「读出所有 特注品.csv 就用」，残留的旧 CSV 会把已经不存在的部品挂进库：这里清一次
+            // 第 5 步在没有 特注品.json 时会退回「读出所有 特注品.csv 就用」，残留的旧 CSV 会把已经不存在的部品挂进库：这里清一次
             RemoveStaleCsvFiles(outputDirectory, result.WrittenFiles, result.Notes);
 
             return result;
@@ -433,13 +433,13 @@ namespace MSIFAITOOLS.Services
             return direct;
         }
 
-        /// <summary>tz.json 顶层存放明细的键（与 <see cref="CmdTzPartCollector"/> 一致）。</summary>
+        /// <summary>特注品.json（旧名 tz.json）顶层存放明细的键（与 <see cref="CmdTzPartCollector"/> 一致）。</summary>
         private const string TzItemKey = "items";
 
-        /// <summary>tz.json 顶层的明细条数键（有就同步更新）。</summary>
+        /// <summary>特注品.json 顶层的明细条数键（有就同步更新）。</summary>
         private const string TzItemCountKey = "item_count";
 
-        /// <summary>tz.json 一条明细里的字段名（顺序与 <see cref="TzCsvColumns"/> 对应；没有「員数」）。</summary>
+        /// <summary>特注品.json 一条明细里的字段名（顺序与 <see cref="TzCsvColumns"/> 对应；没有「員数」）。</summary>
         private static readonly string[] TzFieldKeys = new string[]
         {
             "品種", "部品名", "枠区分", "部品コード", "追加対応特注寸法"
@@ -449,18 +449,20 @@ namespace MSIFAITOOLS.Services
         private static readonly int[] TzCsvColumns = new int[] { 0, 1, 2, 3, 5 };
 
         /// <summary>
-        /// 把刚生成的 特注品.csv 同步进 <c>classify\tz.json</c>（= 补足 tz.json）：
+        /// 把刚生成的 特注品.csv 同步进 <c>classify\特注品.json</c>（改名前的旧名 <c>tz.json</c> 也认，
+        /// 见 <see cref="CmdTzPartCollector.ResolveFilePath"/>）：
         /// 同一个 xlsx（file）的明细按 品種 + 部品名 + 部品コード 对上 → 只补空白字段；
         /// 对不上的 CSV 行追加成新明细（sheet = カメラ，row = 0）。
         /// <para>
         /// 只改这一部分：其它文件（甚至非特注品 xlsx）的明细、其它顶层键都原样保留。
-        /// tz.json 不存在时什么也不做（不新建，避免和 CadPartSplitter 抢着写）。
+        /// 文件不存在时什么也不做（不新建，避免和 CadPartSplitter 抢着写）。
         /// </para>
         /// </summary>
         private static void MergeIntoTzJson(string outputDirectory, string xlsxFileName,
             IList<string[]> csvRows, CmdSpecialProductCsvResult result)
         {
-            string path = CmdTzPartCollector.GetFilePath(outputDirectory);
+            // 新名 特注品.json 优先；升级前只有旧 tz.json 的目录继续同步它自己那份（不新建任何文件）
+            string path = CmdTzPartCollector.ResolveFilePath(outputDirectory);
 
             if (!File.Exists(path))
             {
@@ -558,7 +560,7 @@ namespace MSIFAITOOLS.Services
                 CmdTzPartCollector.FileName, xlsxFileName, filled, added));
         }
 
-        /// <summary>取 tz.json 的 items 数组（没有 / 不是数组时返回 null）。</summary>
+        /// <summary>取 特注品.json 的 items 数组（没有 / 不是数组时返回 null）。</summary>
         private static List<object> ReadTzItems(Dictionary<string, object> root)
         {
             if (root == null)
@@ -579,7 +581,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 在 tz.json 的明细里找与这一行 CSV 对应的明细：同一个 xlsx（file）
+        /// 在 特注品.json 的明细里找与这一行 CSV 对应的明细：同一个 xlsx（file）
         /// + 品種 / 部品名 相同 + 部品コード（两边都有时比较）；两边都没有部品コード 时比较 枠区分。
         /// </summary>
         private static Dictionary<string, object> FindTzItem(List<object> items, string xlsxFileName,
@@ -677,7 +679,7 @@ namespace MSIFAITOOLS.Services
             return Convert.ToString(value, CultureInfo.InvariantCulture).Trim();
         }
 
-        /// <summary>把 JSON 写回文件：UTF-8 无 BOM、CRLF、2 空格缩进（保持 tz.json 可读）。</summary>
+        /// <summary>把 JSON 写回文件：UTF-8 无 BOM、CRLF、2 空格缩进（保持 特注品.json 可读）。</summary>
         private static void WriteJsonFile(string path, object value, JavaScriptSerializer serializer)
         {
             StringBuilder builder = new StringBuilder();

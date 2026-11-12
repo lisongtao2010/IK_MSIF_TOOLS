@@ -1,0 +1,29 @@
+{
+  "source": "D:\\Github_lis2010\\rabowork\\202609_MSIF_TOOLS\\図面-20260918T025344Z-1-001\\アセンブリ図\\H744\\H744U10008要領図.PDF",
+  "page": 1,
+  "dpi": 300,
+  "image": { "w": 9933, "h": 7016 },
+  "table_start_x": 5461,
+  "word_count": 40,
+  "outside_word_count": 1,
+  "table_word_count": 1,
+  "other_word_count": 0,
+  "tables": [
+    {
+      "name": "table_1",
+      "pixel": { "x": 5461, "y": 6686, "w": 1002, "h": 67 },
+      "pdf_mm": { "x": 462.36, "y": 566.08, "w": 84.84, "h": 5.67 },
+      "row_count": 1,
+      "cell_count": 1,
+      "rows": [
+        { "row": 1, "pixel": { "x": 5742, "y": 6686, "w": 721, "h": 67 }, "cells": [
+          { "col": 1, "text": "承認日：2020/11/20",
+            "pixel": { "x": 5742, "y": 6686, "w": 721, "h": 67 },
+            "pdf_mm": { "x": 486.16, "y": 566.08, "w": 61.04, "h": 5.67 } }
+        ] }
+      ]
+    }
+  ],
+  "other_words": [
+  ]
+}

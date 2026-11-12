@@ -129,6 +129,15 @@ namespace CadPartSplitter
         }
 
         /// <summary>
+        /// 底下那个接口客户端：<see cref="TzFileAiExtractor"/>（非 Excel 文件那条通道）
+        /// 复用它，不必再建一份（密钥 / 超时 / HttpClient 都一致）。
+        /// </summary>
+        internal ChatCompletionClient Client
+        {
+            get { return _client; }
+        }
+
+        /// <summary>
         /// 按 <see cref="DetectorOptions"/> 从环境变量 / MSIFAITOOLS 设置 / App.config 建一个实例。
         /// 未配置密钥时抛 <see cref="InvalidOperationException"/>（调用方记日志后跳过 AI）。
         /// </summary>

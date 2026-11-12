@@ -117,6 +117,10 @@
     <Compile Include="TzAiPromptStore.cs" />
     <Compile Include="TzAiResponseParser.cs" />
     <Compile Include="TzAiExtractor.cs" />
+    <!-- 非 Excel 的特注品文件（第 5 位 Z 的 PDF / 文本）：读正文 → AI 判明细 → 回正文核对 -->
+    <Compile Include="TzSourceTextReader.cs" />
+    <Compile Include="TzFileAiPromptStore.cs" />
+    <Compile Include="TzFileAiExtractor.cs" />
     <Compile Include="PdfInfoEditorForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -172,6 +176,16 @@
       <LogicalName>CadPartSplitter.Prompts.TzJsonAi.Prompt.txt</LogicalName>
     </EmbeddedResource>
     <None Include="Prompts\TzJsonAi.Prompt.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!--
+      非 Excel 特注品文件（第 5 位 Z 的 PDF / 文本）AI 判定的提示语：
+      同样「编译进 exe 兜底 + 复制到输出目录可运行时修改」。
+    -->
+    <EmbeddedResource Include="Prompts\TzJsonFileAi.Prompt.txt">
+      <LogicalName>CadPartSplitter.Prompts.TzJsonFileAi.Prompt.txt</LogicalName>
+    </EmbeddedResource>
+    <None Include="Prompts\TzJsonFileAi.Prompt.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

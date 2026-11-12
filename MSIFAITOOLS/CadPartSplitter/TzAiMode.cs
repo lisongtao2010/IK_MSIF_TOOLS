@@ -11,13 +11,19 @@ namespace CadPartSplitter
     /// </para>
     ///
     /// <para>
-    /// <b>默认 Off</b>：AI 会花时间与费用、还可能判错，所以只在显式打开时才调用
-    /// （命令行 <c>--tz-ai</c> / <c>--tz-ai always</c>）。
+    /// <b>默认 Always</b>（每张目标表复核补齐，见 <see cref="DetectorOptions.TzAiMode"/> 的说明）。
+    /// 想省时间 / 费用就用 <see cref="Fallback"/>（规则一条都没收到才调）或 <see cref="Off"/> ——
+    /// 命令行 <c>--tz-ai</c>（= Fallback）/ <c>--no-tz-ai</c>，或环境变量 <c>MSIF_TZ_AI</c>。
+    /// </para>
+    ///
+    /// <para>
+    /// 另外：非 Excel 的特注品文件（PDF 文字层 / 文本类）没有规则可走，<b>只能</b>走 AI
+    /// （<see cref="TzFileAiExtractor"/>）；<see cref="Off"/> 时这类文件会被跳过并记日志。
     /// </para>
     /// </summary>
     public enum TzAiMode
     {
-        /// <summary>不调用 AI（默认）：只走 <c>TzJsonBuilder</c> 的两套规则。</summary>
+        /// <summary>不调用 AI：只走 <c>TzJsonBuilder</c> 的两套规则（非 Excel 的特注品文件会跳过）。</summary>
         Off = 0,
 
         /// <summary>

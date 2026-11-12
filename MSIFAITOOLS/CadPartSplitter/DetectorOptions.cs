@@ -420,28 +420,30 @@ namespace CadPartSplitter
         public bool BuildAssemblyYoryoList { get; set; } = true;
 
         /// <summary>
-        /// 是否在流水线最后，把「图纸文件夹里的 Excel 部品表」抽成
-        /// <c>classify\tz.json</c>（默认开启）。
+        /// 是否在流水线最后，把「图纸文件夹里的特注品部品表」抽成
+        /// <c>classify\特注品.json</c>（默认开启；2026-11 由 <c>tz.json</c> 改名）。
         ///
-        /// 扫「图纸所在文件夹」下的所有 Excel（<c>.xls</c> / <c>.xlsx</c> / <c>.xlsm</c>，
-        /// <c>~$</c> 临时文件与 <c>AiAppData</c> 里的产物跳过），读工作簿里「カメラ」表的部品表，
+        /// 扫「图纸所在文件夹」下<b>文件名（去扩展名）第 5 个字符是 <c>Z</c></b> 的文件，
+        /// <b>扩展名不限</b>（<c>~$</c> 临时文件与 <c>AiAppData</c> 里的产物跳过）：
+        ///   · Excel（<c>.xls</c> / <c>.xlsx</c> / <c>.xlsm</c>）：读「カメラ」表的部品表，
+        ///     走规则（5 列标题 / 分块版式）+ AI 复核；
+        ///   · 其它（PDF 文字层 / CSV / TXT…）：正文交给 AI 判（图片 / 没有文字层的 PDF 跳过）。
         /// 取这五列：<c>品種 / 部品名 / 枠区分 / 部品コード / 追加対応特注寸法</c>。
         /// 参考版式：<c>H310Z10004.XLS</c> 的「カメラ」sheet。
         ///
         /// 输出位置与 <see cref="BuildPdfInfoList"/> 的清单同一个目录、同样是整批共用一份：
-        ///   · 单张：<c>&lt;图纸目录&gt;\AiAppData\classify\tz.json</c>；
-        ///   · 批量：<c>&lt;输出根目录&gt;\classify\tz.json</c>（<b>不是</b>每张图纸各一份）。
+        ///   · 单张：<c>&lt;图纸目录&gt;\AiAppData\classify\特注品.json</c>；
+        ///   · 批量：<c>&lt;输出根目录&gt;\classify\特注品.json</c>（<b>不是</b>每张图纸各一份）。
         ///
-        /// 读取用 ExcelDataReader（只读，不要求机器上装 Excel）。没有「カメラ」表的工作簿、
-        /// 或表里凑不齐那 5 个列名时跳过并记日志；整批一张都没凑齐时不写文件，也不删旧文件。
-        /// 命令行的 <c>--no-tz</c> 关掉这一步。
+        /// Excel 读取用 ExcelDataReader（只读，不要求机器上装 Excel）。一个部品明细都没收到时
+        /// 不写文件，也不删旧文件。命令行的 <c>--no-tz</c> 关掉这一步。
         /// </summary>
         public bool BuildTzJson { get; set; } = true;
 
-        // ── Excel 部品表的 AI 判定与补足（tz.json）─────────────────────────────
+        // ── 特注品部品表的 AI 判定与补足（特注品.json）─────────────────────────
 
         /// <summary>
-        /// Excel 部品表（<c>classify\tz.json</c>）什么时候请 AI 判定与补足（默认 <see cref="TzAiMode.Off"/>）。
+        /// Excel 部品表（<c>classify\特注品.json</c>）什么时候请 AI 判定与补足（默认 <see cref="TzAiMode.Always"/>）。
         ///
         /// <para>
         /// Excel 的版式各家不同（表头拆行 / 列名改写 / 分块版式 / 合并单元格 / 多块表并排），
@@ -452,9 +454,10 @@ namespace CadPartSplitter
         /// </para>
         ///
         /// <para>
-        /// 取值：<see cref="TzAiMode.Off"/>（默认，不调 AI）/ <see cref="TzAiMode.Fallback"/>
-        /// （规则一条都没收到时才调，省钱）/ <see cref="TzAiMode.Always"/>（每张表都复核一遍，
-        /// 规则漏掉的明细补进来）。命令行 <c>--tz-ai</c> / <c>--tz-ai always</c> / <c>--no-tz-ai</c>。
+        /// 取值：<see cref="TzAiMode.Always"/>（<b>默认</b>：每张目标表都请 AI 复核一遍，规则漏掉的明细补进来）/
+        /// <see cref="TzAiMode.Fallback"/>（只有规则一条都没收到时才调，省钱）/
+        /// <see cref="TzAiMode.Off"/>（不调 AI）。命令行 <c>--tz-ai</c> / <c>--tz-ai always</c> /
+        /// <c>--no-tz-ai</c>；环境变量 <c>MSIF_TZ_AI</c> 可取 <c>always</c> / <c>fallback</c> / <c>off</c>。
         /// </para>
         ///
         /// <para>
@@ -467,12 +470,15 @@ namespace CadPartSplitter
         public TzAiMode TzAiMode { get; set; } = GetDefaultTzAiMode();
 
         /// <summary>
-        /// <see cref="TzAiMode"/> 的默认值：环境变量 <c>MSIF_TZ_AI</c>（或 <c>CADTZ_AI</c>）为
-        /// <c>fallback</c> / <c>always</c> 时默认打开，否则 <see cref="TzAiMode.Off"/>。
+        /// <see cref="TzAiMode"/> 的默认值：<b>默认 <see cref="TzAiMode.Always"/></b>（每张部品表都请 AI
+        /// 复核一遍）；环境变量 <c>MSIF_TZ_AI</c>（或 <c>CADTZ_AI</c>）可改成 <c>fallback</c> / <c>off</c>，
+        /// 命令行 <c>--no-tz-ai</c> 也能关。
         ///
         /// <para>
-        /// 图形界面没有这个开关（避免给批量流程加一个会花时间 / 费用的选项），
-        /// 想在界面里用时设环境变量最省事；命令行则直接用 <c>--tz-ai</c>。
+        /// 为什么默认打开：「第 5 位是 Z 的特注品文件」里既有 Excel 也有 PDF / 文本，版式又各家不同，
+        /// 规则 + AI 复核才能既不漏也不写错字（AI 的结果一律回原文逐字核对：Excel 按行回原表、
+        /// 其它文件回正文，核对不上的丢掉，见 <see cref="TzAiExtractor"/> / <see cref="TzFileAiExtractor"/>）。
+        /// 不想花时间 / 费用的批次设 <c>MSIF_TZ_AI=off</c> 或加 <c>--no-tz-ai</c>。
         /// </para>
         /// </summary>
         private static TzAiMode GetDefaultTzAiMode()
@@ -488,10 +494,16 @@ namespace CadPartSplitter
 
                 if (string.IsNullOrWhiteSpace(text))
                 {
-                    return TzAiMode.Off;
+                    return TzAiMode.Always;     // 默认：每张部品表都请 AI 复核一遍
                 }
 
                 text = text.Trim().ToLowerInvariant();
+
+                if (text == "off" || text == "no" || text == "none" || text == "0" ||
+                    text == "false")
+                {
+                    return TzAiMode.Off;
+                }
 
                 if (text == "always" || text == "all")
                 {
@@ -505,10 +517,10 @@ namespace CadPartSplitter
             }
             catch (Exception)
             {
-                // 读环境变量失败按默认关闭处理
+                // 读环境变量失败按默认（打开）处理
             }
 
-            return TzAiMode.Off;
+            return TzAiMode.Always;
         }
 
         /// <summary>
@@ -523,6 +535,17 @@ namespace CadPartSplitter
         /// 调大能覆盖更长的表，但调用更慢、费用更高。
         /// </summary>
         public int TzAiMaxGridChars { get; set; } = 24000;
+
+        /// <summary>
+        /// 一次最多送给 AI 的「非 Excel 文件正文」字符数（默认 24000，最小按 2000 处理）。
+        ///
+        /// <para>
+        /// 「第 5 位是 Z」但不是 Excel 的文件（PDF 文字层 / 文本类）没有行列结构，
+        /// 只能把正文摊平后整段送 AI（见 <see cref="TzSourceTextReader"/> / <see cref="TzFileAiExtractor"/>）。
+        /// 超长时按这个上限截断，提示词里会注明「后面的内容已省略」。
+        /// </para>
+        /// </summary>
+        public int TzAiMaxSourceChars { get; set; } = 24000;
 
         // ── 输出 ─────────────────────────────────────────────────────────────
 

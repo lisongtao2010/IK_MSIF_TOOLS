@@ -17,23 +17,27 @@ namespace MSIFAITOOLS.Services
     ///   · CMD 分析：01_アッセンブリ図_部品機能情報.csv → 本工具自己的列名映射 → 部品明细。
     /// 入库方式、校验状态、部品信息画面的显示方式完全一致（同一 DB / 同一表）。
     ///
-    /// 点一次【CMD 分析】依次执行 <b>最前面 1 步 + 第 1~6 步</b>（名字与日志前缀见 <see cref="CmdAnalysisSteps"/>，
-    /// 详细说明见 <c>docs\CMD分析_步骤命名.md</c>）：
+    /// 点一次【CMD 分析】依次执行 <b>第 1~7 步</b>（名字与日志前缀见 <see cref="CmdAnalysisSteps"/>，
+    /// 详细说明见 <c>docs\cmd-steps\00-索引.md</c>）：
     /// <list type="number">
-    ///   <item><b>最前面 特注品 CSV 生成</b>（<see cref="CmdSpecialProductCsvExporter"/>，不占步骤编号）：
-    ///         遍历 PDF 文件夹下的 <c>*.xlsx</c>，文件名第 5 位是 <c>Z</c>（特注品）的读部品表，
-    ///         写 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>。<b>不碰数据库</b>；</item>
-    ///   <item><b>第 1 步 装配图部品入库</b>（旧称「阶段 A」；<see cref="CmdPartAnalyzer"/>）；</item>
-    ///   <item><b>第 2 步 圈号拆分</b>（旧称「阶段 A2」；<see cref="CmdCalloutPartSplitter"/>）；</item>
-    ///   <item><b>第 3 步 要領図部品追加</b>（旧称「阶段 B」；<see cref="CmdInstructionPartCollector"/>）；</item>
-    ///   <item><b>第 4 步 tz.json 部品追加</b>（<see cref="CmdTzPartCollector"/>）。</item>
-    ///   <item><b>第 5 步 部品コード正規化</b>（<see cref="CmdPartCodeNormalizer"/>，含同図番内の重複チェック）。</item>
-    ///   <item><b>第 6 步 使い分け自動設定</b>（<see cref="CmdUsageKindCollector"/>）。</item>
+    ///   <item><b>第 1 步 特注品.json 作成</b>（<see cref="CmdSpecialProductCsvExporter"/>，<b>不写库</b>）：
+    ///         遍历 PDF 文件夹下的 <c>*.xlsx</c>，文件名第 5 位是 <c>Z</c>（特注品）的读部品表 →
+    ///         写 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c> 并同步 <c>classify\特注品.json</c>（旧名 <c>tz.json</c>）；
+    ///         不写数据库、也不需要装配图行，所以排在最前面、在 targets 检查之前执行；</item>
+    ///   <item><b>第 2 步 装配图部品入库</b>（旧称「阶段 A」；<see cref="CmdPartAnalyzer"/>）；</item>
+    ///   <item><b>第 3 步 圈号拆分</b>（旧称「阶段 A2」；<see cref="CmdCalloutPartSplitter"/>）；</item>
+    ///   <item><b>第 4 步 要領図部品追加</b>（旧称「阶段 B」；<see cref="CmdInstructionPartCollector"/>）；</item>
+    ///   <item><b>第 5 步 特注品部品登录</b>（<see cref="CmdTzPartCollector"/>）：读第 1 步写出的
+    ///         <c>classify\特注品.json</c>（没有时退回 <c>AiAppData\*\特注品.csv</c>），把「品種」命中
+    ///         分类依据的明细追加到装配图名下（<c>特注 = 1</c>）；必须在第 2 步之后（要加工装配图的行）；</item>
+    ///   <item><b>第 6 步 部品コード正規化</b>（<see cref="CmdPartCodeNormalizer"/>，含同図番内の重複チェック）。</item>
+    ///   <item><b>第 7 步 使い分け自動設定</b>（<see cref="CmdUsageKindCollector"/>）。</item>
     /// </list>
-    /// 这 6 步之前还有 <b>第 0 步 分解与分类</b>（【开始分解】= CadPartSplitter 分割 + 本工具分解 +
+    /// 这 7 步之前还有 <b>第 0 步 分解与分类</b>（【开始分解】= CadPartSplitter 分割 + 本工具分解 +
     /// <c>classify\PdfInfoList.txt</c>），它不属于本按钮。
     ///
-    /// 追加步骤（第 2 / 3 / 4 / 5 / 6 步，都只对 <c>classify\PdfInfoList.txt</c> 里「図面分类 = アッセンブリ図」的记录生效）：
+    /// 追加步骤（第 3 / 4 / 5 / 6 / 7 步，都只对 <c>classify\PdfInfoList.txt</c> 里「図面分类 = アッセンブリ図」的记录生效；
+    /// 第 5 步的特注部品登录也用同一份分类依据）：
     /// <list type="number">
     ///   <item><b>按圈号分割</b>（<see cref="CmdCalloutPartSplitter"/>）：对「来源标识 = アッセンブリ図」的行，
     ///         用「番号」在 <c>parts_info.json</c> 的 <c>callouts</c> 里找圈号（如 <c>text=4</c> / <c>display=④4</c>）；
@@ -43,7 +47,9 @@ namespace MSIFAITOOLS.Services
     ///         <c>01_アッセンブリ図_要領図.csv</c> → 各要領図的 <c>02_要領図_部品機能情報.csv</c>，
     ///         把「品種命中分类依据」的部品行、以及「品種为空（所有品種共用）」的部品行
     ///         也登录到同一张表（図番 = アッセンブリ図、部品図番 = 要領図；备註 <c>品種：共通</c>）；</item>
-    ///   <item><b>追加 tz.json 部品</b>（<see cref="CmdTzPartCollector"/>）：读 <c>classify\tz.json</c>（Excel 部品表），
+    ///   <item><b>追加特注部品（第 5 步）</b>（<see cref="CmdTzPartCollector"/>）：读第 1 步同步的
+    ///         <c>classify\特注品.json</c>（旧名 <c>tz.json</c>；没有 JSON 时退回
+    ///         <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>），
     ///         把「品種」命中分类依据的明细（部品名 / 枠区分 / 部品コード / 追加対応特注寸法）
     ///         登录到同一张表（図番 = アッセンブリ図、备註 <c>品種：…；特注寸法：…</c>）。</item>
     ///   <item><b>正規化部品コード</b>（<see cref="CmdPartCodeNormalizer"/>）：读 <c>部品マスタ\Tbl_部品マスタ.csv</c>，
@@ -54,14 +60,13 @@ namespace MSIFAITOOLS.Services
     ///         H下限 / H上限 / W下限 / W上限」全相同的 2 行以上，按「部品コード」查
     ///         <c>hiroidashiData</c> 里的 <c>*.xlsx</c> 第 4 列（部品ｺｰﾄﾞ/形材番号）相同的行，
     ///         把第 12 列（使い分け）的值按顺序填到这些行上（只改这一列）。
-    ///         <b>放在部品コード 正規化（第 5 步）之后</b>：这时部品コード 已经是 <c>MEA□429</c> 这种写法，
+    ///         <b>放在部品コード 正規化（第 6 步）之后</b>：这时部品コード 已经是 <c>MEA□429</c> 这种写法，
     ///         和拾い出し表一致，查表最准。</item>
     /// </list>
     ///
     /// 执行范围由 <see cref="CmdAnalysisStepKind"/> 决定：主按钮【CMD 分析】传
-    /// <see cref="CmdAnalysisStepKind.All"/>（一次跑完 最前面 1 步 + 第 1~6 步）；
-    /// 界面上的六个子按钮各传一个值，只重跑其中一步（调试 / 单步重试用）；
-    /// <see cref="CmdAnalysisStepKind.SpecialProductCsv"/> 没有界面按钮，供代码只跑「特注品 CSV 生成」。
+    /// <see cref="CmdAnalysisStepKind.All"/>（一次跑完第 1~7 步）；
+    /// 界面上的 8 个子按钮（0 前置校验 + 第 1~7 步）各传一个值，只重跑其中一步（调试 / 单步重试用）。
     /// </summary>
     internal sealed class CmdPartAnalysisService
     {
@@ -95,18 +100,22 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 同上，但可以选择只执行其中一步（界面上的六个子按钮）：
+        /// 同上，但可以选择只执行其中一步（界面【CMD 分析】下面一排 8 个按钮：
+        /// 0 前置校验 + 第 1~7 步；其中「前置校验」只检查、不写库，由 <c>Form1.RunCmdPreflight</c> 处理，
+        /// 不会进到这里）：
         /// <list type="bullet">
-        ///   <item><see cref="CmdAnalysisStepKind.All"/>：依次跑 最前面 1 步 + 第 1~6 步（= 主按钮【CMD 分析】）；</item>
-        ///   <item><see cref="CmdAnalysisStepKind.SpecialProductCsv"/>：只跑「特注品 CSV 生成」（不写数据库）；</item>
-        ///   <item><see cref="CmdAnalysisStepKind.Assembly"/>：只跑第 1 步 装配图部品入库；</item>
-        ///   <item><see cref="CmdAnalysisStepKind.CalloutSplit"/>：只跑第 2 步 圈号拆分；</item>
-        ///   <item><see cref="CmdAnalysisStepKind.YoryoAppend"/>：只跑第 3 步 要領図部品追加；</item>
-        ///   <item><see cref="CmdAnalysisStepKind.TzAppend"/>：只跑第 4 步 tz.json 部品追加。</item>
-        ///   <item><see cref="CmdAnalysisStepKind.PartCode"/>：只跑第 5 步 部品コード正規化。</item>
-        ///   <item><see cref="CmdAnalysisStepKind.UsageKind"/>：只跑第 6 步 使い分け自動設定。</item>
+        ///   <item><see cref="CmdAnalysisStepKind.All"/>：依次跑 第 1~7 步（= 主按钮【CMD 分析】）；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.Preflight"/>：只检查不写库（界面 Form1.RunCmdPreflight 处理）；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.SpecialProductJson"/>：只跑第 1 步 特注品.json 作成（不写库）；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.Assembly"/>：只跑第 2 步 装配图部品入库；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.CalloutSplit"/>：只跑第 3 步 圈号拆分；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.YoryoAppend"/>：只跑第 4 步 要領図部品追加；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.TzParts"/>：只跑第 5 步 特注品部品登录；</item>
+        ///   <item><see cref="CmdAnalysisStepKind.PartCode"/>：只跑第 6 步 部品コード正規化。</item>
+        ///   <item><see cref="CmdAnalysisStepKind.UsageKind"/>：只跑第 7 步 使い分け自動設定。</item>
         /// </list>
-        /// 第 2 / 3 / 4 / 5 / 6 步依赖第 1 步已经入库的行：数据库里没有该図番的行时只记一条警告，不做任何写库。
+        /// 第 1 步只读 xlsx（不需要装配图行、不写库）；
+        /// 第 3 / 4 / 5 / 6 / 7 步依赖第 2 步已经入库的行：数据库里没有该図番的行时只记一条警告，不做任何写库。
         /// </summary>
         /// <param name="classifications">一览（分类结果）数据。</param>
         /// <param name="outputDirectory">分解输出根目录（&lt;PDF 文件夹&gt;\AiAppData）。</param>
@@ -126,31 +135,25 @@ namespace MSIFAITOOLS.Services
             PartAnalysisService.ReportLog(onLog, LogKind.Info,
                 "数据来源：" + CmdPartAnalyzer.LtStep1FileName + "（CadPartSplitter 生成，不调用 AI）");
             PartAnalysisService.ReportLog(onLog, LogKind.Info, "部品基本信息数据库：" + _databasePath);
+            bool runSpecialProductJson = stepKind == CmdAnalysisStepKind.All ||
+                stepKind == CmdAnalysisStepKind.SpecialProductJson;
             bool runAssembly = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.Assembly;
             bool runCalloutSplit = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.CalloutSplit;
             bool runYoryoAppend = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.YoryoAppend;
-            bool runTzAppend = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.TzAppend;
-            bool runUsageKind = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.UsageKind;
+            bool runTzParts = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.TzParts;
             bool runPartCode = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.PartCode;
-            bool runSpecialProductCsv = stepKind == CmdAnalysisStepKind.All ||
-                stepKind == CmdAnalysisStepKind.SpecialProductCsv;
+            bool runUsageKind = stepKind == CmdAnalysisStepKind.All || stepKind == CmdAnalysisStepKind.UsageKind;
 
             PartAnalysisService.ReportLog(onLog, LogKind.Info, CmdAnalysisSteps.DescribeRun(stepKind));
 
-            // 最前面：文件名第 5 位是 Z（特注品）的 xlsx → AiAppData\<文件名>\特注品.csv
-            // 不依赖数据库，所以在挑选「アッセンブリ図」之前执行（没有装配图也会生成 CSV）
-            if (runSpecialProductCsv)
+            // 第 1 步（特注品.json 作成）：文件名第 5 位是 Z（特注品）的部品表 → 特注品.csv +
+            // classify\特注品.json。这一步不写库、也不需要装配图行，所以排在最前面、在 targets 检查之前跑
+            List<PdfClassification> targets = PartAnalysisService.SelectAssemblyTargets(classifications);
+
+            if (runSpecialProductJson)
             {
                 ExportSpecialProductCsv(outputDirectory, onLog);
-
-                // 只跑这一步（分步执行）：到这里结束，不写数据库
-                if (stepKind == CmdAnalysisStepKind.SpecialProductCsv)
-                {
-                    return summary;
-                }
             }
-
-            List<PdfClassification> targets = PartAnalysisService.SelectAssemblyTargets(classifications);
 
             if (targets.Count == 0)
             {
@@ -167,9 +170,13 @@ namespace MSIFAITOOLS.Services
 
             using (PartBasicInfoRepository repository = new PartBasicInfoRepository(_databasePath))
             {
-                if (!runAssembly && !HasSavedRows(repository, targets))
+                // 第 1 步不写库；第 2 步是建行的源头，其余步骤都要在「第 2 步写好的行」上加工
+                bool needsSavedRows = runCalloutSplit || runYoryoAppend || runTzParts ||
+                    runPartCode || runUsageKind;
+
+                if (!runAssembly && needsSavedRows && !HasSavedRows(repository, targets))
                 {
-                    // 第 2 / 3 / 4 / 5 / 6 步都依赖第 1 步写入的行：一行都没有就只提示，不做任何写库
+                    // 第 3 / 4 / 5 / 6 / 7 步都依赖第 2 步写入的行：一行都没有就只提示，不做任何写库
                     PartAnalysisService.ReportLog(onLog, LogKind.Warning, string.Format(
                         "数据库中还没有这些図番的部品行，请先执行 {0}。", CmdAnalysisSteps.AssemblyStep.Label));
 
@@ -180,7 +187,7 @@ namespace MSIFAITOOLS.Services
                 {
                     CmdPartAnalyzer analyzer = new CmdPartAnalyzer();
 
-                    // 第 1 步：装配图部品入库（读 01_アッセンブリ図_部品機能情報.csv → 建行 → xy.txt 校验 → 入库）
+                    // 第 2 步：装配图部品入库（读 01_アッセンブリ図_部品機能情報.csv → 建行 → xy.txt 校验 → 入库）
                     PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Empty);
                     PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Format(
                         "{0}读 {1} → 建行 → {2} 校验 → 入库（{3} 个 PDF）",
@@ -194,33 +201,35 @@ namespace MSIFAITOOLS.Services
                     }
                 }
 
-                // 第 2 步：按 parts_info.json 的圈号（callouts）把アッセンブリ図 的部品行按位置分割
+                // 第 3 步：按 parts_info.json 的圈号（callouts）把アッセンブリ図 的部品行按位置分割
                 if (runCalloutSplit)
                 {
                     SplitAssemblyParts(targets, outputDirectory, repository, summary, onLog);
                 }
 
-                // 第 3 步：要領図（02_要領図_部品機能情報.csv）的部品挂到アッセンブリ図 上
+                // 第 4 步：要領図（02_要領図_部品機能情報.csv）的部品挂到アッセンブリ図 上
                 if (runYoryoAppend)
                 {
                     CollectInstructionParts(targets, outputDirectory, repository, summary, onLog);
                 }
 
-                // 第 4 步：classify\tz.json（Excel 部品表）里品種命中分类依据的明细挂到アッセンブリ図 上
-                if (runTzAppend)
+                // 第 5 步：特注品部品登录 —— 读第 1 步作成的 classify\特注品.json
+                //        （没有时退回 特注品.csv），把「品種」命中分类依据的明细追加到装配图名下
+                //        放在第 4 步之后：追加要在装配图 / 要領図 已经写好的行上加工
+                if (runTzParts)
                 {
                     AppendTzParts(targets, outputDirectory, repository, summary, onLog);
                 }
 
-                // 第 5 步：按部品マスタ 的「色」把部品コード 的颜色换成 □、连续符号压成一个 □
+                // 第 6 步：按部品マスタ 的「色」把部品コード 的颜色换成 □、连续符号压成一个 □
                 //        （换完和同図番 / 同页码 / 同番号 的另一行撞键的行跳过 = 重複チェック）
                 if (runPartCode)
                 {
                     NormalizePartCodes(targets, outputDirectory, repository, summary, onLog);
                 }
 
-                // 第 6 步：同一図番内 7 个字段全同的多行 → 按（正規化後の）部品コード 查 hiroidashiData 的 xlsx → 填「使い分け」
-                //        放在第 5 步之后：部品コード 已经统一成 MEA□429 这种写法，和拾い出し表一致
+                // 第 7 步：同一図番内 7 个字段全同的多行 → 按（正規化後の）部品コード 查 hiroidashiData 的 xlsx → 填「使い分け」
+                //        放在第 6 步之后：部品コード 已经统一成 MEA□429 这种写法，和拾い出し表一致
                 if (runUsageKind)
                 {
                     AssignUsageKinds(targets, outputDirectory, repository, summary, onLog);
@@ -231,28 +240,34 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 【最前面】特注品 CSV 生成：遍历 PDF 文件夹（&lt;outputDirectory&gt; 的上一级）下的 <c>*.xlsx</c>，
+        /// 【第 1 步】特注品.json 作成（由 <see cref="SpecialProductJsonStep"/> 调用）：
+        /// 遍历 PDF 文件夹（&lt;outputDirectory&gt; 的上一级）下的 <c>*.xlsx</c>，
         /// 文件名第 5 位是 <c>Z</c>（特注品）的读部品表 → 写
-        /// <c>&lt;outputDirectory&gt;\&lt;文件名&gt;\特注品.csv</c>（见 <see cref="CmdSpecialProductCsvExporter"/>）。
+        /// <c>&lt;outputDirectory&gt;\&lt;文件名&gt;\特注品.csv</c>（见 <see cref="CmdSpecialProductCsvExporter"/>），
+        /// 并把内容同步进 <c>classify\特注品.json</c>（旧名 <c>tz.json</c>）。
         /// <para>
         /// 配置了 AI 接口密钥时还会做<b>AI 补足</b>：让 AI 读该図番的 <c>plu_table.txt</c>，
-        /// 先补 Excel 里空着的字段 / 缺的部品，再补「追加対応特注寸法」，
-        /// 并把最终内容同步进 <c>classify\tz.json</c>（Excel 已有的值一律不动）。
-        /// 没配密钥时与原来完全一样（不联网）。
+        /// 先补 Excel 里空着的字段 / 缺的部品，再补「追加対応特注寸法」
+        /// （Excel 已有的值一律不动）。没配密钥时与原来完全一样（不联网）。
         /// </para>
-        /// 这一步<b>不碰数据库</b>，也不依赖第 1 步的结果。
+        /// 这一步本身<b>不碰数据库</b>；第 5 步的「特注品部品登录」（<see cref="AppendTzParts"/>）才会写库。
         /// </summary>
         private static void ExportSpecialProductCsv(string outputDirectory, Action<LogKind, string> onLog)
         {
             string pdfDirectory = Path.GetDirectoryName(outputDirectory);
             string metaFolder = Path.GetFileName(outputDirectory);
-            string relativePath = Path.Combine(metaFolder, "<文件名>",
-                CmdSpecialProductCsvExporter.CsvFileName);
+
+            // 只用于日志显示的相对路径：AiAppData\<文件名>\特注品.csv
+            // 不能用 Path.Combine 拼「<文件名>」—— '<' '>' 是 Windows 的非法路径字符，
+            // .NET Framework 的 Path.Combine 会直接抛 ArgumentException（パスに無効な文字が含まれています）。
+            // 这里只是文本说明、不参与任何文件访问，所以按 <図番号> 的既有写法用 string.Format 拼。
+            string relativePath = string.Format("{0}{1}<文件名>{1}{2}", metaFolder,
+                Path.DirectorySeparatorChar, CmdSpecialProductCsvExporter.CsvFileName);
 
             PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Empty);
             PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Format(
                 "{0}扫描 {1} 下的 xlsx（文件名第 {2} 位是 {3} = 特注品）→ {4}",
-                CmdAnalysisSteps.SpecialProductCsvStep.LogHeader, pdfDirectory,
+                CmdAnalysisSteps.SpecialProductJsonStep.LogHeader, pdfDirectory,
                 CmdSpecialProductRule.DrawingNoPosition, CmdSpecialProductRule.DrawingNoMark,
                 relativePath));
 
@@ -339,8 +354,8 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 数据库里是否已经有这些図番的部品行 —— 第 2 / 3 / 4 / 5 / 6 步单独执行前的前置检查。
-        /// 任意一个図番有行即视为第 1 步执行过（各図番的处理互不影响）。
+        /// 数据库里是否已经有这些図番的部品行 —— 第 3 / 4 / 5 / 6 / 7 步单独执行前的前置检查。
+        /// 任意一个図番有行即视为第 2 步执行过（各図番的处理互不影响）。
         /// </summary>
         private static bool HasSavedRows(PartBasicInfoRepository repository, IList<PdfClassification> targets)
         {
@@ -539,7 +554,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 第 2 步「圈号拆分」（旧称「阶段 A2」）：按圈号（<c>parts_info.json</c> 的 <c>callouts</c>）
+        /// 第 3 步「圈号拆分」（旧称「阶段 A2」）：按圈号（<c>parts_info.json</c> 的 <c>callouts</c>）
         /// 把アッセンブリ図 的部品行按位置分割。
         ///
         /// 只处理「参照元 = アッセンブリ図」的行（<see cref="CmdCalloutPartSplitter.IsAssemblyRow"/>）：
@@ -631,7 +646,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 第 2 步「圈号拆分」的対象図番：<c>classify\PdfInfoList.txt</c> 里「图面分类 = アッセンブリ図」的记录，
+        /// 第 3 步「圈号拆分」的対象図番：<c>classify\PdfInfoList.txt</c> 里「图面分类 = アッセンブリ図」的记录，
         /// 再补上一览里的「アッセンブリ図」——清单不存在时靠后者，清单的「図番号」与 PDF 文件名不一致时
         /// 数据库里的図番（= 文件名去扩展名）也能被覆盖到。
         /// </summary>
@@ -662,7 +677,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 第 3 步「要領図部品追加」（旧称「阶段 B」）：按要領図清单把要領図的部品登录到アッセンブリ図 名下。
+        /// 第 4 步「要領図部品追加」（旧称「阶段 B」）：按要領図清单把要領図的部品登录到アッセンブリ図 名下。
         ///
         /// 每个アッセンブリ図：
         /// <list type="number">
@@ -769,16 +784,15 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 第 4 步「tz.json 部品追加」（<b>步骤名沿用旧名</b>）：读 <c>classify\PdfInfoList.txt</c> 里
-        /// 「图面分类 = アッセンブリ図」的分类依据，把<b>最前面那步生成的
-        /// <c>AiAppData\&lt;文件名&gt;\特注品.csv</c></b>（Excel 部品表的 CSV 版，
-        /// <see cref="CmdTzPartCollector.LoadCsvEntries"/>）中「品種」命中该依据的明细挂到该装配图名下
-        /// —— <b>不再解析 Excel、也不再读 <c>classify\tz.json</c></b>
-        /// （一个 CSV 都没有时才退回读 tz.json，并记一条警告）。
+        /// 第 5 步「特注品部品登录」：读 <c>classify\PdfInfoList.txt</c> 里「图面分类 = アッセンブリ図」的分类依据，
+        /// 把第 1 步写出的 <c>classify\特注品.json</c>（旧名 <c>tz.json</c>，<see cref="CmdTzPartCollector.LoadEntries"/>）
+        /// 中「品種」命中该依据的明细挂到该装配图名下；
+        /// <b>一个 JSON 都读不到时才退回</b> 第 1 步生成的 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>
+        /// （<see cref="CmdTzPartCollector.LoadCsvEntries"/>，并记一条提示）—— 这一步本身<b>不解析 Excel</b>。
         ///
         /// 每个アッセンブリ図：先去掉上一次本步骤写入的行（来源标识 = tz.json），按分类依据重新收集，
         /// 与已有行合并后一次写库（<see cref="PartBasicInfoRepository.Save"/> 会先清空该図番再插入，
-        /// 所以必须把已有行一起提交，否则会把第 1 / 3 步的明细冲掉）。
+        /// 所以必须把已有行一起提交，否则会把第 1~4 步的明细冲掉）。
         /// 合并后为空（该図番只有上次的 tz 行、这次一条都不再命中）时改用
         /// <see cref="PartBasicInfoRepository.ReplaceByDrawing"/> 把该図番清空 ——
         /// <see cref="PartBasicInfoRepository.Save"/> 收到空表会直接返回，不清库。
@@ -788,10 +802,11 @@ namespace MSIFAITOOLS.Services
         {
             PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Empty);
             PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Format(
-                "{0}读 {1}（图面分类 = 「{2}」的记录，取分类依据）→ 最前面生成的 {3} 中" +
-                "「品種」命中分类依据的明细挂到「{2}」上（不再解析 Excel）",
-                CmdAnalysisSteps.TzAppendStep.LogHeader, CmdTzPartCollector.PdfInfoListFileName,
-                PdfCategoryNames.Assembly, CmdSpecialProductCsvExporter.CsvFileName));
+                "{0}读 {1}（图面分类 = 「{2}」的记录，取分类依据）→ {3} 中「品種」命中分类依据的明细" +
+                "挂到「{2}」上（没有 JSON 时退回 {4}；不解析 Excel）",
+                CmdAnalysisSteps.TzPartsStep.LogHeader, CmdTzPartCollector.PdfInfoListFileName,
+                PdfCategoryNames.Assembly, CmdTzPartCollector.FileName,
+                CmdSpecialProductCsvExporter.CsvFileName));
 
             List<string> notes = new List<string>();
             Dictionary<string, string> evidence =
@@ -804,39 +819,57 @@ namespace MSIFAITOOLS.Services
 
             notes.Clear();
 
+            // 第 5 步的数据源：优先第 1 步作成的 classify\特注品.json（含 AI 补足后的最终内容），
+            // 没有 / 读不到时退回 特注品.csv（同一份明细的表格版）
+            List<string> jsonNotes = new List<string>();
+            List<CmdTzEntry> jsonEntries = CmdTzPartCollector.LoadEntries(outputDirectory, jsonNotes);
+
             int csvFileCount;
-            List<CmdTzEntry> entries =
+            List<CmdTzEntry> csvEntries =
                 CmdTzPartCollector.LoadCsvEntries(outputDirectory, notes, out csvFileCount);
-            string sourceName = CmdSpecialProductCsvExporter.CsvFileName;
-            int sourceFileCount = csvFileCount;
 
-            if (entries.Count == 0)
+            List<CmdTzEntry> entries;
+            string sourceName;
+            int sourceFileCount;
+
+            if (jsonEntries.Count > 0)
             {
-                // 没有 特注品.csv（例如只单步跑第 4 步、最前面那步没跑）：退回旧的 classify\tz.json
-                List<string> legacyNotes = new List<string>();
-                List<CmdTzEntry> legacy = CmdTzPartCollector.LoadEntries(outputDirectory, legacyNotes);
+                entries = jsonEntries;
+                sourceName = CmdTzPartCollector.FileName;
+                sourceFileCount = 1;
 
-                if (legacy.Count > 0)
+                foreach (string note in jsonNotes)
                 {
-                    entries = legacy;
-                    sourceName = CmdTzPartCollector.FileName;
-                    sourceFileCount = 1;
-                    notes.Clear();
-                    notes.Add(string.Format("没有 {0}，改用旧的 {1}\\{2}（建议先跑最前面的「{3}」）",
-                        CmdSpecialProductCsvExporter.CsvFileName, CmdTzPartCollector.ClassifyFolderName,
-                        CmdTzPartCollector.FileName, CmdAnalysisSteps.SpecialProductCsvName));
+                    PartAnalysisService.ReportLog(onLog, LogKind.Warning, "  " + note);
                 }
             }
-
-            foreach (string note in notes)
+            else
             {
-                PartAnalysisService.ReportLog(onLog, LogKind.Warning, "  " + note);
+                entries = csvEntries;
+                sourceName = CmdSpecialProductCsvExporter.CsvFileName;
+                sourceFileCount = csvFileCount;
+
+                foreach (string note in notes)
+                {
+                    PartAnalysisService.ReportLog(onLog, LogKind.Warning, "  " + note);
+                }
+
+                if (entries.Count > 0)
+                {
+                    // JSON 被手工删掉 / 早期数据：退回 CSV，并提示重跑第 1 步重新生成 JSON
+                    PartAnalysisService.ReportLog(onLog, LogKind.Info, string.Format(
+                        "  没有 {0}\\{1}，改用 {2}（重跑 {3} 可重新生成它）",
+                        CmdTzPartCollector.ClassifyFolderName,
+                        Path.GetFileName(CmdTzPartCollector.ResolveFilePath(outputDirectory)),
+                        CmdSpecialProductCsvExporter.CsvFileName,
+                        CmdAnalysisSteps.SpecialProductJsonStep.Label));
+                }
             }
 
             if (entries.Count == 0)
             {
                 PartAnalysisService.ReportLog(onLog, LogKind.Warning,
-                    "  没有读到明细，跳过 " + CmdAnalysisSteps.TzAppendStep.Label);
+                    "  没有读到明细，跳过 " + CmdAnalysisSteps.TzPartsStep.Label);
 
                 return;
             }
@@ -848,10 +881,11 @@ namespace MSIFAITOOLS.Services
                 sourceName, sourceFileCount, entries.Count, PdfCategoryNames.Assembly, evidence.Count));
 
             CmdTzPartCollector collector = new CmdTzPartCollector();
-            // 读 tz.json 时把它的路径写进「来源表格文件」（读 CSV 时每行用自己那个 CSV 的路径）
+            // 读 特注品.json（改名前的 tz.json）时把它的路径写进「来源表格文件」
+            //（读 CSV 时每行用自己那个 CSV 的路径）
             string fallbackSourcePath = string.Equals(sourceName, CmdTzPartCollector.FileName,
                 StringComparison.Ordinal)
-                ? CmdTzPartCollector.GetFilePath(outputDirectory)
+                ? CmdTzPartCollector.ResolveFilePath(outputDirectory)
                 : string.Empty;
             int processed = 0;
 
@@ -922,7 +956,7 @@ namespace MSIFAITOOLS.Services
                     PartAnalysisService.ReportLog(onLog, LogKind.Success, string.Format(
                         "  {0} 部品登录：{1} 条（図番 {2}；该図番合计 {3} 行{4}）",
                         sourceName, result.Parts.Count, drawingNo, merged.Count,
-                        removed > 0 ? string.Format("，已剔除上次 tz 行 {0} 条", removed) : string.Empty));
+                        removed > 0 ? string.Format("，已剔除上次写入的特注品行 {0} 条", removed) : string.Empty));
                 }
                 catch (Exception ex)
                 {
@@ -941,7 +975,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 第 6 步「使い分け自動設定」：同一図番内「区分 / 参照元 / 部品コード /
+        /// 第 7 步「使い分け自動設定」：同一図番内「区分 / 参照元 / 部品コード /
         /// H下限 / H上限 / W下限 / W上限」全部相同的 2 行以上 = 同一个部品的多条，
         /// 按「部品コード」去 <c>hiroidashiData</c> 里的 <c>*.xlsx</c> 第 4 列
         /// （部品ｺｰﾄﾞ/形材番号）找相同的行，把第 12 列「使い分け」的值按顺序填到这些行上。
@@ -955,13 +989,13 @@ namespace MSIFAITOOLS.Services
         /// </list>
         /// <para>
         /// 这一步<b>不建行、不删行</b>，只改「使い分け」一列（<see cref="PartBasicInfoRepository.UpdateUsageKinds"/>），
-        /// 所以第 1 / 2 / 3 / 4 / 5 步写入的内容不会被冲掉。
+        /// 所以第 1~6 步写入的内容不会被冲掉。
         /// </para>
         /// <para>
-        /// <b>执行顺序在第 5 步 部品コード正規化 之后</b>：这时部品コード 已经统一成
+        /// <b>执行顺序在第 6 步 部品コード正規化 之后</b>：这时部品コード 已经统一成
         /// <c>MEA□429</c> 这种写法（和拾い出し表第 4 列一致），查表最准；
         /// 正規化时撞键被跳过的行保持原样，这里按原写法照样能查（符号按通配处理）。
-        /// 「重複チェック」本身在第 5 步做（撞键的行不写），所以本步看到的部品コード 都是唯一的。
+        /// 「重複チェック」本身在第 6 步做（撞键的行不写），所以本步看到的部品コード 都是唯一的。
         /// </para>
         /// </summary>
         private static void AssignUsageKinds(IList<PdfClassification> targets, string outputDirectory,
@@ -1041,7 +1075,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 一个図番的第 6 步：读该図番的行 → 按 7 个字段分组 → 组内按顺序填「使い分け」→ 只更新这一列。
+        /// 一个図番的第 7 步：读该図番的行 → 按 7 个字段分组 → 组内按顺序填「使い分け」→ 只更新这一列。
         /// </summary>
         private static void AssignUsageKindsForDrawing(string drawingNo, PartBasicInfoRepository repository,
             CmdUsageKindIndex index, PartAnalysisSummary summary, Action<LogKind, string> onLog)
@@ -1181,9 +1215,9 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 是否为第 4 步写入的行（「数据来源」= <see cref="PartSourceKind.CmdTz"/> = <c>CMD分析・tz.json</c>；
-        /// 第 4 步现在读 <c>特注品.csv</c>，但这个<b>值沿用旧文字</b>以兼容已有数据，
-        /// 所以这里不用跟着改）。
+        /// 是否为第 5 步写入的「特注部品」行（「数据来源」= <see cref="PartSourceKind.CmdTz"/> = <c>CMD分析・tz.json</c>；
+        /// 第 5 步读的是第 1 步作成的 <c>特注品.json</c>（没有时退回 <c>特注品.csv</c>），但这个<b>值沿用旧文字</b>
+        /// 以兼容已有数据，所以这里不用跟着改）。
         /// 「参照元」现在写的是该行的図番，所以这里看「数据来源」；
         /// 老数据没有「数据来源」时退回看「参照元」（升级前的老行可能还是 tz.json）。
         /// </summary>
@@ -1281,7 +1315,7 @@ namespace MSIFAITOOLS.Services
         }
 
         /// <summary>
-        /// 第 3 步写库前：把「要領図」行与「アッセンブリ図」行里<b>部品名相同</b>的合掉 ——
+        /// 第 4 步写库前：把「要領図」行与「アッセンブリ図」行里<b>部品名相同</b>的合掉 ——
         /// 用该装配图行的「区分」覆盖要領図行（<see cref="PartBasicInfo.OverrideFrameKind"/>），
         /// 然后把装配图行从整张表里删掉（只在本図番的明细里操作）。
         /// <para>
@@ -1359,11 +1393,11 @@ namespace MSIFAITOOLS.Services
             return removedCount;
         }
 
-        /// <summary>位置前缀（第 2 / 3 步按位置拆条时加在部品名 / 部材名开头的字）。</summary>
+        /// <summary>位置前缀（第 3 / 4 步按位置拆条时加在部品名 / 部材名开头的字）。</summary>
         private static readonly char[] PositionPrefixChars = { '右', '左', '中', '上', '下' };
 
         /// <summary>
-        /// 第 3 步合并之后的收尾：<b>「区分」还空着的行，用「同一个部品」的区分补上</b>
+        /// 第 4 步合并之后的收尾：<b>「区分」还空着的行，用「同一个部品」的区分补上</b>
         /// （只补区分，不改部品名、也不删除任何行）。
         /// <para>
         /// 为什么需要：第 2 / 3 步按位置拆条时会<b>给部品名 / 部材名加位置前缀</b>（右 / 左、上 / 下），
@@ -1834,7 +1868,7 @@ namespace MSIFAITOOLS.Services
             return string.Format(
                 "対象 {0} 个：登录成功 {1}，无部品数据 {2}，缺少 {3} {4}，失败 {5}；共登录 {6} 行（坐标一致 {7} / 不符 {8}）；" +
                 "要領図部品 {9} 行（02 文件 {10} 个 / 缺 {11}）；" +
-                "tz.json 部品 {12} 行（tz 明细 {13} 条 / {14} 个図番）；" +
+                "特注部品 {12} 行（特注品 明细 {13} 条 / {14} 个図番）；" +
                 "按圈号分割 {15} 行（{16} 个部品 / {17} 个図番）；" +
                 "部品コード 正規化 {18} 行（色 {19} / 连续符号 {20} / 跳过 {21}）；" +
                 "使い分け {22} 行（{23} 组 / {24} 个図番 / 未命中 {25} 组）",

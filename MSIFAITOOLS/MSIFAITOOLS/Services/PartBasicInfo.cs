@@ -287,10 +287,12 @@ namespace MSIFAITOOLS.Services
         public const string CmdYoryo = "CMD分析・要領図";
 
         /// <summary>
-        /// 【CMD 分析】第 4 步：读最前面那步生成的 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>
-        /// （Excel 部品表；没有 CSV 时退回 <c>classify\tz.json</c>），挂在装配图名下（<c>CmdTzPartCollector</c>）。
-        /// <b>值沿用旧文字</b>「<c>CMD分析・tz.json</c>」：升级前写进库的行也是这个值，
-        /// 这样第 4 步重跑时能照样把它们剔除 / 覆盖（<c>CmdPartAnalysisService.IsTzRow</c>）。
+        /// 【CMD 分析】第 2 步后半：读同一步前半生成的 <c>AiAppData\&lt;文件名&gt;\特注品.csv</c>
+        /// （Excel 部品表；没有 CSV 时退回 <c>classify\特注品.json</c>／旧名 <c>tz.json</c>），
+        /// 挂在装配图名下（<c>CmdTzPartCollector</c>）。
+        /// <b>值沿用旧文字</b>「<c>CMD分析・tz.json</c>」：文件名虽已改成 <c>特注品.json</c>，
+        /// 但升级前写进库的行也是这个值 —— 这样重跑时新旧行能被一起剔除 / 覆盖
+        /// （<c>CmdPartAnalysisService.IsTzRow</c>），不需要任何数据迁移。
         /// </summary>
         public const string CmdTz = "CMD分析・tz.json";
 
@@ -320,7 +322,7 @@ namespace MSIFAITOOLS.Services
         /// <summary>【CMD 分析】阶段 B：要領図 的部品（<see cref="PartSourceKind.CmdYoryo"/> 的简称）。</summary>
         public const string CmdYoryo = "要領図";
 
-        /// <summary>【CMD 分析】第 4 步：Excel 部品表的部品（<see cref="PartSourceKind.CmdTz"/> 的简称，沿用旧名）。</summary>
+        /// <summary>【CMD 分析】第 2 步后半：特注品部品表的部品（<see cref="PartSourceKind.CmdTz"/> 的简称，沿用旧名；只留在内存，不写库）。</summary>
         public const string CmdTz = "tz.json";
 
         /// <summary>部品基本信息画面上手工追加的行（<see cref="PartSourceKind.Manual"/> 的简称）。</summary>
